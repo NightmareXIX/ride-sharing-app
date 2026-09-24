@@ -1,0 +1,7 @@
+# Normalise line endings so shell scripts and SQL behave the same in Docker and CI
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.docx binary
