@@ -9,7 +9,7 @@ import {
   type SessionConfig,
 } from '../../auth/session.js';
 import { gender, MAX_VEHICLE_CAPACITY } from '../../db/schema/index.js';
-import { signUp } from '../../services/accounts.js';
+import { logIn, signUp } from '../../services/accounts.js';
 import type { V1Deps } from './index.js';
 
 // Stored lowercased, so the same address in any case is one account.
@@ -55,6 +55,11 @@ const signUpSchema = z.discriminatedUnion(
   { error: 'must be passenger or driver' },
 );
 
+const logInSchema = z.object({
+  email,
+  password: z.string().min(1, 'is required'),
+});
+
 async function startSession(res: Response, session: Session, config: SessionConfig) {
   const token = await signSession(session, config.secret);
   res.cookie(SESSION_COOKIE, token, sessionCookieOptions(config.secure));
@@ -68,6 +73,19 @@ export function authRouter({ db, session }: V1Deps): Router {
     const account = await signUp(db, signUpSchema.parse(req.body));
     await startSession(res, { userId: account.user.id, role: account.user.role }, session);
     res.status(201).json(account);
+  });
+
+  router.post('/login', async (req, res) => {
+    const { email, password } = logInSchema.parse(req.body);
+    const account = await logIn(db, email, password);
+    await startSession(res, { userId: account.user.id, role: account.user.role }, session);
+    res.json(account);
+  });
+
+  // Needs no session, so pressing it twice (or after expiry) is harmless (NFR-37).
+  router.post('/logout', (_req, res) => {
+    res.clearCookie(SESSION_COOKIE, sessionCookieOptions(session.secure));
+    res.status(204).end();
   });
 
   return router;

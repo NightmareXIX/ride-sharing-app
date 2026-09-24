@@ -1,4 +1,6 @@
-import { hashPassword } from '../auth/password.js';
+import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
+import { hashPassword, verifyPassword } from '../auth/password.js';
 import type { Database } from '../db/client.js';
 import { isUniqueViolation } from '../db/errors.js';
 import { users, vehicles, wallets, type User, type Vehicle } from '../db/schema/index.js';
@@ -76,4 +78,54 @@ export async function signUp(db: Database, input: SignUpInput): Promise<Account>
     }
     throw err;
   }
+}
+
+// A hash of a random password, compared against when the email is unknown so that a
+// wrong email takes as long as a wrong password and doesn't reveal who has an account.
+let dummyHash: Promise<string> | undefined;
+
+function invalidCredentials(): AppError {
+  return new AppError(401, 'INVALID_CREDENTIALS', 'The email or password is incorrect.');
+}
+
+// Checks the password (FR-P2, FR-D2). Unknown email and wrong password fail identically.
+export async function logIn(db: Database, email: string, password: string): Promise<Account> {
+  const [user] = await db
+    .select({ id: users.id, passwordHash: users.passwordHash })
+    .from(users)
+    .where(eq(users.email, email));
+
+  const passwordHash = user?.passwordHash ?? (await (dummyHash ??= hashPassword(randomUUID())));
+  const matches = await verifyPassword(password, passwordHash);
+  if (!user || !matches) throw invalidCredentials();
+
+  const account = await getAccount(db, user.id);
+  if (!account) throw invalidCredentials();
+  return account;
+}
+
+// Null when the user doesn't exist, e.g. a valid session for a deleted account.
+export async function getAccount(db: Database, userId: string): Promise<Account | null> {
+  const [row] = await db
+    .select({
+      user: accountUserColumns,
+      balance: wallets.balance,
+      vehicleId: vehicles.id,
+      vehicleName: vehicles.name,
+      vehicleCapacity: vehicles.capacity,
+    })
+    .from(users)
+    .innerJoin(wallets, eq(wallets.userId, users.id))
+    .leftJoin(vehicles, eq(vehicles.driverId, users.id))
+    .where(eq(users.id, userId));
+  if (!row) return null;
+
+  return {
+    user: row.user,
+    wallet: { balance: row.balance },
+    vehicle:
+      row.vehicleId !== null && row.vehicleName !== null && row.vehicleCapacity !== null
+        ? { id: row.vehicleId, name: row.vehicleName, capacity: row.vehicleCapacity }
+        : null,
+  };
 }

@@ -6,7 +6,8 @@ export type ErrorCode =
   | 'NOT_FOUND'
   | 'INTERNAL_ERROR'
   // Accounts (phase 1)
-  | 'EMAIL_TAKEN';
+  | 'EMAIL_TAKEN'
+  | 'INVALID_CREDENTIALS';
 
 // Every error response has this shape (NFR-35).
 export interface ErrorBody {
