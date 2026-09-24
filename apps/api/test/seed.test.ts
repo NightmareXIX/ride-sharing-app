@@ -3,7 +3,7 @@ import { eq, sql } from 'drizzle-orm';
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Database } from '../src/db/client.js';
-import { users } from '../src/db/schema/index.js';
+import { users, vehicles, wallets } from '../src/db/schema/index.js';
 import { DEMO_PASSWORD, seedStoryCast } from '../src/db/seeder.js';
 import { TEST_DATABASE_URL } from './support/db.js';
 
@@ -46,6 +46,31 @@ describe('story cast seed (FR-S1, NFR-31)', () => {
     expect(first).toHaveLength(4);
     expect(second).toEqual([]);
     expect(await db.$count(users)).toBe(4);
+    expect(await db.$count(wallets)).toBe(4);
+    expect(await db.$count(vehicles)).toBe(1);
+  });
+
+  it('gives every cast member an empty wallet (FR-W1)', async () => {
+    await seedStoryCast(db);
+
+    const rows = await db
+      .select({ name: users.name, balance: wallets.balance })
+      .from(wallets)
+      .innerJoin(users, eq(users.id, wallets.userId))
+      .orderBy(users.name);
+    expect(rows).toEqual(
+      ['Jashim', 'Nusrat', 'Rafiq', 'Shirin'].map((name) => ({ name, balance: '0.00' })),
+    );
+  });
+
+  it("registers Bullet, with 3 seats, as Jashim's Tesla", async () => {
+    await seedStoryCast(db);
+
+    const rows = await db
+      .select({ driver: users.name, name: vehicles.name, capacity: vehicles.capacity })
+      .from(vehicles)
+      .innerJoin(users, eq(users.id, vehicles.driverId));
+    expect(rows).toEqual([{ driver: 'Jashim', name: 'Bullet', capacity: 3 }]);
   });
 
   it('stores a bcrypt hash of the demo password, never the password itself', async () => {
