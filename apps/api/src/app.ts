@@ -1,5 +1,6 @@
 import express, { type Express } from 'express';
 import helmet from 'helmet';
+import { errorHandler, notFoundHandler } from './http/middleware/errorHandler.js';
 import { requestLogger } from './http/middleware/requestLogger.js';
 import type { Logger } from './logger.js';
 import { healthRouter } from './routes/health.js';
@@ -21,6 +22,9 @@ export function createApp({ logger }: AppDeps): Express {
 
   app.use(healthRouter());
   app.use('/api/v1', v1Router());
+
+  app.use(notFoundHandler);
+  app.use(errorHandler);
 
   return app;
 }
