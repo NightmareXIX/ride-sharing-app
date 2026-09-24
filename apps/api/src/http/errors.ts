@@ -1,6 +1,12 @@
 // Error codes shared by every route (API Routes §10). Feature phases add their own.
 export type ErrorCode =
-  'VALIDATION_ERROR' | 'UNAUTHENTICATED' | 'WRONG_ROLE' | 'NOT_FOUND' | 'INTERNAL_ERROR';
+  | 'VALIDATION_ERROR'
+  | 'UNAUTHENTICATED'
+  | 'WRONG_ROLE'
+  | 'NOT_FOUND'
+  | 'INTERNAL_ERROR'
+  // Accounts (phase 1)
+  | 'EMAIL_TAKEN';
 
 // Every error response has this shape (NFR-35).
 export interface ErrorBody {
