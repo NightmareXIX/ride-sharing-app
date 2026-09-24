@@ -1,5 +1,6 @@
 import { createApp } from './app.js';
 import { loadConfig, type Config } from './config.js';
+import { createPool } from './db/client.js';
 import { createLogger } from './logger.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -13,7 +14,8 @@ try {
 }
 
 const logger = createLogger(config);
-const app = createApp({ logger });
+const pool = createPool(config.DATABASE_URL, logger);
+const app = createApp({ logger, pool });
 
 const server = app.listen(config.PORT, () => {
   logger.info({ port: config.PORT }, 'API listening');
@@ -32,12 +34,18 @@ function shutdown(signal: NodeJS.Signals): void {
   }, SHUTDOWN_TIMEOUT_MS).unref();
 
   server.close((err) => {
-    if (err) {
-      logger.error({ err }, 'Error while closing the HTTP server');
-      process.exit(1);
-    }
-    logger.info('Shutdown complete');
-    process.exit(0);
+    if (err) logger.error({ err }, 'Error while closing the HTTP server');
+    // Only release database connections once no request can still need one.
+    pool.end().then(
+      () => {
+        logger.info('Shutdown complete');
+        process.exit(err ? 1 : 0);
+      },
+      (poolErr: unknown) => {
+        logger.error({ err: poolErr }, 'Error while closing the database pool');
+        process.exit(1);
+      },
+    );
   });
 }
 

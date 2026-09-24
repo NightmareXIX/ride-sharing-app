@@ -8,7 +8,12 @@ export type Database = NodePgDatabase<typeof schema>;
 // Timestamps are `timestamptz`, so values are stored in UTC and come back as absolute
 // instants whatever the session time zone is (NFR-38).
 export function createPool(databaseUrl: string, logger?: Logger): pg.Pool {
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 10 });
+  // Fail fast rather than queue forever when the database is unreachable.
+  const pool = new pg.Pool({
+    connectionString: databaseUrl,
+    max: 10,
+    connectionTimeoutMillis: 5_000,
+  });
   // An idle client losing its connection must not crash the process.
   pool.on('error', (err) => {
     logger?.error({ err }, 'Idle database client error');
