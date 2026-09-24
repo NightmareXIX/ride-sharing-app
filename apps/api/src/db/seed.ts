@@ -1,9 +1,9 @@
-import { loadConfig } from '../config.js';
+import { loadDatabaseConfig } from '../config.js';
 import { createDb, createPool } from './client.js';
 import { seedStoryCast } from './seeder.js';
 
 // CLI: `npm run db:seed`, and the second step of the API container's start command.
-const config = loadConfig();
+const config = loadDatabaseConfig();
 const pool = createPool(config.DATABASE_URL);
 try {
   const inserted = await seedStoryCast(createDb(pool));

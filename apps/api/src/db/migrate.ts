@@ -1,9 +1,9 @@
-import { loadConfig } from '../config.js';
+import { loadDatabaseConfig } from '../config.js';
 import { createDb, createPool } from './client.js';
 import { runMigrations } from './migrator.js';
 
 // CLI: `npm run db:migrate`, and the first step of the API container's start command.
-const config = loadConfig();
+const config = loadDatabaseConfig();
 const pool = createPool(config.DATABASE_URL);
 try {
   await runMigrations(createDb(pool));
