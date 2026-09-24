@@ -34,3 +34,7 @@ docs/Dhaka_Tesla_Pool_PRD_Internship.docx
 CLAUDE.md
 CLAUDE.local.md
 .claude.json
+# Written by `next dev` into apps/web on every start
+AGENTS.md
+# Browser-automation screenshots and logs
+.playwright-mcp/
