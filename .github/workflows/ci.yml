@@ -1,0 +1,51 @@
+# Code checks and all tests on every pull request (NFR-30).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Tests run against a real Postgres, never a mock (NFR-28).
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: tesla
+          POSTGRES_PASSWORD: tesla
+          POSTGRES_DB: tesla_pool_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tesla -d tesla_pool_test"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      TEST_DATABASE_URL: postgres://tesla:tesla@localhost:5432/tesla_pool_test
+      NEXT_TELEMETRY_DISABLED: 1
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
