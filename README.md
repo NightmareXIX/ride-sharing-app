@@ -5,9 +5,9 @@ Share a seat. Split the fare. Survive Dhaka traffic.
 A ride-pooling MVP. Passengers request rides, and a driver accepts them into a shared Tesla.
 The Tesla never carries more people than it has seats, and every passenger pays their own fare.
 
-> **Status:** phase 0 (foundations) is done. The repo has the web and API skeletons, the
-> database with migrations and the story-cast seed, health checks, Docker Compose and CI.
-> Product features arrive phase by phase; see [the development plan](docs/Dhaka%20Tesla%20Pool%20—%20Development%20Plan.md).
+> **Status:** phases 0 (foundations) and 1 (accounts) are done. People can sign up as a
+> passenger or as a driver with their Tesla, sign in and out, and see their TeslaPay
+> balance. Ride features arrive phase by phase; see [the development plan](docs/Dhaka%20Tesla%20Pool%20—%20Development%20Plan.md).
 
 ## Contents
 
@@ -46,12 +46,13 @@ The specs are the source of truth for every phase:
 | [Core entities](docs/Dhaka_Tesla_Pool_Core_Entities.md)                             | Entities and the ERD                                         |
 | [API routes](docs/Dhaka_Tesla_Pool_API_Routes.md)                                   | Every route, grouped by role                                 |
 | [Development plan](docs/Dhaka%20Tesla%20Pool%20—%20Development%20Plan.md)           | Phases 0–9 and the workflow for each phase                   |
+| [Phase 1 LLD: accounts](docs/lld/phase-1-accounts.md)                               | Tables, sessions, routes and tests for sign-up and sign-in   |
 
 - Architecture: [docs/Architecture Diagram-selection.png](docs/Architecture%20Diagram-selection.png)
 - ERD: [docs/Dhaka Tesla Pool ERD-selection.png](docs/Dhaka%20Tesla%20Pool%20ERD-selection.png)
 
 The ERD shows the target schema. The database grows one migration per phase, so today it
-holds only `users`.
+holds `users`, `wallets` and `vehicles`.
 
 The browser talks only to the Next.js site. The site proxies `/api/v1/*` to the Express
 API, so the login cookie is first-party even though the two run on different hosts.
@@ -95,7 +96,9 @@ apps/
       app.ts           builds the app (no listen), used by server.ts and tests
       server.ts        starts listening and shuts down cleanly on SIGTERM
       config.ts        env validation
-      http/            error envelope and middleware
+      http/            error envelope and middleware (request log, auth, role checks)
+      auth/            password hashing and the signed session cookie
+      services/        business rules and transactions, called by the routes
       routes/          /health and /api/v1
       db/              schema, client, migrator, seeder and their CLIs
     drizzle/           versioned SQL migrations (generated, then reviewed)
@@ -157,6 +160,8 @@ secrets live only in the hosting platforms' settings (NFR-11).
 | `PORT`                                              | api         | HTTP port, default 4000                                           |
 | `NODE_ENV`                                          | api         | `development` turns on pretty logs                                |
 | `LOG_LEVEL`                                         | api         | pino level, default `info`                                        |
+| `SESSION_SECRET`                                    | api         | Signs the login cookie; at least 32 characters. Required.         |
+| `COOKIE_SECURE`                                     | api         | `Secure` cookie flag; defaults to on when `NODE_ENV=production`   |
 | `TEST_DATABASE_URL`                                 | api tests   | Separate test database, created automatically if missing          |
 | `API_URL`                                           | web (build) | Where the proxy sends `/api/v1/*`. It's read at **build** time.   |
 
@@ -190,7 +195,11 @@ Covered so far:
 - Liveness and readiness, including a 503 when the database is unreachable
 - The error envelope for unknown routes and malformed JSON
 - Request-id generation and safe propagation
-- Seed idempotency and password hashing
+- Seed idempotency and password hashing, plus every cast wallet and Jashim's Bullet
+- Sign-up rules: required gender, a Tesla for drivers only, seat limits, one transaction
+- Ten simultaneous sign-ups with one email, five rounds: exactly one account each time
+- Sign-in: a wrong password and an unknown email get the same answer
+- Sessions: missing, tampered, foreign-secret and expired tokens get 401; the wrong role gets 403
 
 ## Demo credentials
 
@@ -203,8 +212,8 @@ Every seeded account uses the password **`TeslaPool#2026`**.
 | Rafiq  | rafiq@teslapool.test  | passenger | male   |
 | Shirin | shirin@teslapool.test | passenger | female |
 
-Sign-in arrives in phase 1. Jashim's Tesla "Bullet" (3 seats) and the TeslaPay wallets
-arrive with the phases that introduce those tables.
+Sign in at http://localhost:3000/login. Jashim drives the Tesla "Bullet" (3 seats). Every
+wallet starts at ৳ 0.00; top-ups arrive with TeslaPay in phase 6.
 
 ## API overview
 
@@ -215,6 +224,19 @@ list of routes is in [the API routes spec](docs/Dhaka_Tesla_Pool_API_Routes.md).
 | ------ | --------------- | ------------------------------------------------------------------------------- |
 | GET    | `/health`       | `200 { "status": "ok" }` while the process is up                                |
 | GET    | `/health/ready` | `200 { "status": "ok", "database": "up" }`, or `503` if Postgres is unreachable |
+
+Accounts (phase 1), all under `/api/v1`:
+
+| Method | Route          | Does                                                                       | Errors                         |
+| ------ | -------------- | -------------------------------------------------------------------------- | ------------------------------ |
+| POST   | `/auth/signup` | Creates the account, its wallet and a driver's Tesla; signs in. **201**    | 400, 409 `EMAIL_TAKEN`         |
+| POST   | `/auth/login`  | Signs in with email and password. **200**                                  | 400, 401 `INVALID_CREDENTIALS` |
+| POST   | `/auth/logout` | Clears the session cookie. **204**, with or without a session              | —                              |
+| GET    | `/me`          | The user, `wallet.balance` as a string (`"0.00"`), and the Tesla or `null` | 401 `UNAUTHENTICATED`          |
+
+Signing in sets `tp_session`, an HttpOnly, SameSite=Lax cookie that lasts 24 hours
+(NFR-6). It holds a signed token (HS256 JWT), so there is no sessions table. Request and
+response shapes are in the [phase 1 LLD](docs/lld/phase-1-accounts.md#4-routes).
 
 Every error has the same shape (NFR-35):
 
@@ -231,6 +253,10 @@ request's log line (NFR-42).
   and Jashim and Rafiq are male, so a same-gender pool can be demonstrated.
 - **Demo password.** One shared, published password for all seeded accounts. They are
   demo accounts, not secrets.
+- **Seat limit.** A Tesla has 1 to 6 passenger seats. The largest model, the Model X,
+  seats 6 besides the driver.
+- **Wallets start empty.** Balances stay at ৳ 0.00 until the TeslaPay ledger exists
+  (phase 6), so every taka in a wallet is backed by a ledger entry (NFR-39).
 
 ## Known limitations
 
@@ -239,6 +265,8 @@ the full list. Specific to the current state:
 
 - Next.js resolves the API proxy address at build time. The web image has to be rebuilt to
   point at a different API.
+- Signing out clears the cookie, but sessions are stateless. A token copied before
+  sign-out keeps working until its 24 hours are up.
 - drizzle-kit, a dev-only tool, pulls in an old esbuild that `npm audit` flags. It never
   reaches the Docker images.
 
