@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { PAYMENT_METHODS } from '../../domain/booking.js';
 import { AppError } from '../../http/errors.js';
 import { currentSession, requireAuth, requireRole } from '../../http/middleware/auth.js';
-import { getBooking, getCurrentBooking, requestRide } from '../../services/bookings.js';
+import { cancelRide, getBooking, getCurrentBooking, requestRide } from '../../services/bookings.js';
 import type { V1Deps } from './index.js';
 import { trip, uuidParam } from './schemas.js';
 
@@ -43,6 +43,11 @@ export function bookingsRouter(deps: V1Deps): Router {
 
   router.get('/:id', async (req, res) => {
     const booking = await getBooking(db, currentSession(req).userId, bookingId(req.params.id));
+    res.json({ booking });
+  });
+
+  router.post('/:id/cancel', async (req, res) => {
+    const booking = await cancelRide(db, currentSession(req).userId, bookingId(req.params.id));
     res.json({ booking });
   });
 

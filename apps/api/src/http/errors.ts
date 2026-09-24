@@ -12,7 +12,8 @@ export type ErrorCode =
   | 'LOCATION_REQUIRED'
   | 'ACTIVE_BOOKING_EXISTS'
   | 'NEGATIVE_BALANCE'
-  | 'INSUFFICIENT_BALANCE';
+  | 'INSUFFICIENT_BALANCE'
+  | 'INVALID_TRANSITION';
 
 // Every error response has this shape (NFR-35).
 export interface ErrorBody {

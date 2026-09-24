@@ -1,5 +1,5 @@
 import Big from 'big.js';
-import { and, eq, max, notInArray } from 'drizzle-orm';
+import { and, eq, max, notInArray, sql } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
 import { isUniqueViolation } from '../db/errors.js';
 import {
@@ -15,6 +15,7 @@ import type { DistanceMethod, DistanceService } from '../geo/distance.js';
 import type { LatLng } from '../geo/serviceArea.js';
 import { AppError } from '../http/errors.js';
 import type { Logger } from '../logger.js';
+import { transitionBooking } from './transitions.js';
 
 export interface RideDeps {
   db: Database;
@@ -257,4 +258,36 @@ export async function requestRide(
     if (!winner) throw err;
     return { booking: repeatOrConflict(winner, input), created: false };
   }
+}
+
+// A passenger cancels a request still waiting for a driver, for free (FR-P7). Pressing
+// Cancel twice is harmless (NFR-37). Cancelling after acceptance arrives in phase 3.
+export async function cancelRide(
+  db: Database,
+  passengerId: string,
+  bookingId: string,
+): Promise<BookingView> {
+  const outcome = await db.transaction((tx) =>
+    transitionBooking(tx, {
+      bookingId,
+      owner: eq(bookings.passengerId, passengerId),
+      from: ['REQUESTED'],
+      to: 'CANCELLED',
+      actor: { id: passengerId, role: 'passenger' },
+      reason: 'passenger_cancel',
+      set: { cancelledAt: sql`now()` },
+    }),
+  );
+
+  if (outcome.ok || outcome.current === 'CANCELLED') {
+    return getBooking(db, passengerId, bookingId);
+  }
+  if (outcome.current === null) throw notFound();
+  throw new AppError(
+    409,
+    'INVALID_TRANSITION',
+    outcome.current === 'COMPLETED'
+      ? 'This ride has already finished.'
+      : 'This ride can no longer be cancelled.',
+  );
 }
