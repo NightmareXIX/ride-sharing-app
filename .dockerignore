@@ -1,0 +1,17 @@
+**/node_modules
+**/.next
+**/dist
+**/coverage
+**/*.tsbuildinfo
+**/next-env.d.ts
+.git
+.github
+docs
+.env
+.env.*
+!.env.example
+
+# Agent tooling never enters an image
+.claude
+CLAUDE.md
+CLAUDE.local.md
