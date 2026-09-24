@@ -4,6 +4,7 @@ import type { Database } from '../../db/client.js';
 import type { DistanceService } from '../../geo/distance.js';
 import { authRouter } from './auth.js';
 import { driverRouter } from './driver.js';
+import { fareEstimatesRouter } from './fareEstimates.js';
 import { meRouter } from './me.js';
 
 export interface V1Deps {
@@ -18,5 +19,6 @@ export function v1Router(deps: V1Deps): Router {
   router.use('/auth', authRouter(deps));
   router.use('/me', meRouter(deps));
   router.use('/driver', driverRouter(deps));
+  router.use('/fare-estimates', fareEstimatesRouter(deps));
   return router;
 }

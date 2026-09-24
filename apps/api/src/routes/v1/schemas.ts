@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { MAX_VEHICLE_CAPACITY } from '../../db/schema/index.js';
+import { RIDE_OPTIONS } from '../../domain/fare.js';
+import { haversineKm } from '../../geo/haversine.js';
 import { SERVICE_AREA } from '../../geo/serviceArea.js';
 
 const OUTSIDE_DHAKA = 'must be inside Dhaka';
@@ -31,3 +34,22 @@ export const place = location.extend({
 
 // Route ids that aren't UUIDs can't match anything, so they are simply not found.
 export const uuidParam = z.uuid();
+
+// Pickup and destination this close together aren't a ride.
+export const MIN_TRIP_KM = 0.1;
+
+// A trip to price or request (FR-P3). Seats are checked against the largest Tesla later.
+export const trip = z
+  .object({
+    pickup: place,
+    destination: place,
+    seats: z
+      .int('must be a whole number')
+      .min(1, 'must be at least 1')
+      .max(MAX_VEHICLE_CAPACITY, `must be at most ${MAX_VEHICLE_CAPACITY}`),
+    rideOption: z.enum(RIDE_OPTIONS, 'must be pool, same_gender or solo'),
+  })
+  .refine((t) => haversineKm(t.pickup, t.destination) >= MIN_TRIP_KM, {
+    path: ['destination'],
+    message: 'must be at least 100 m from the pickup',
+  });
