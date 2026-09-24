@@ -15,7 +15,11 @@ try {
 
 const logger = createLogger(config);
 const pool = createPool(config.DATABASE_URL, logger);
-const app = createApp({ logger, pool });
+const app = createApp({
+  logger,
+  pool,
+  session: { secret: config.SESSION_SECRET, secure: config.COOKIE_SECURE },
+});
 
 const server = app.listen(config.PORT, () => {
   logger.info({ port: config.PORT }, 'API listening');

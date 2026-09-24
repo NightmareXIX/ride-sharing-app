@@ -29,6 +29,10 @@ services:
       PORT: 4000
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATABASE_URL: postgres://${POSTGRES_USER:-tesla}:${POSTGRES_PASSWORD:-tesla}@db:5432/${POSTGRES_DB:-tesla_pool}
+      # Local-only default so `docker compose up` needs no .env; deployments set their own.
+      SESSION_SECRET: ${SESSION_SECRET:-local-dev-only-session-secret-change-me}
+      # The site is served over plain http://localhost, where Secure cookies are dropped.
+      COOKIE_SECURE: 'false'
     ports:
       - '${API_PORT:-4000}:4000'
     # The API starts only once Postgres accepts connections (NFR-15).
