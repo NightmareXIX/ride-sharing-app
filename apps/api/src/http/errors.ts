@@ -9,7 +9,10 @@ export type ErrorCode =
   | 'EMAIL_TAKEN'
   | 'INVALID_CREDENTIALS'
   // Ride requests (phase 2)
-  | 'LOCATION_REQUIRED';
+  | 'LOCATION_REQUIRED'
+  | 'ACTIVE_BOOKING_EXISTS'
+  | 'NEGATIVE_BALANCE'
+  | 'INSUFFICIENT_BALANCE';
 
 // Every error response has this shape (NFR-35).
 export interface ErrorBody {

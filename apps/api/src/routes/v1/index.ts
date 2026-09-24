@@ -3,6 +3,7 @@ import type { SessionConfig } from '../../auth/session.js';
 import type { Database } from '../../db/client.js';
 import type { DistanceService } from '../../geo/distance.js';
 import { authRouter } from './auth.js';
+import { bookingsRouter } from './bookings.js';
 import { driverRouter } from './driver.js';
 import { fareEstimatesRouter } from './fareEstimates.js';
 import { meRouter } from './me.js';
@@ -20,5 +21,6 @@ export function v1Router(deps: V1Deps): Router {
   router.use('/me', meRouter(deps));
   router.use('/driver', driverRouter(deps));
   router.use('/fare-estimates', fareEstimatesRouter(deps));
+  router.use('/bookings', bookingsRouter(deps));
   return router;
 }
