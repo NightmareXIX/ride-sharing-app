@@ -1,6 +1,7 @@
 import { createApp } from './app.js';
 import { loadConfig, type Config } from './config.js';
 import { createPool } from './db/client.js';
+import { ROUTING_TIMEOUT_MS } from './geo/distance.js';
 import { createLogger } from './logger.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -19,7 +20,15 @@ const app = createApp({
   logger,
   pool,
   session: { secret: config.SESSION_SECRET, secure: config.COOKIE_SECURE },
+  routing: {
+    apiKey: config.ORS_API_KEY,
+    baseUrl: config.ORS_BASE_URL,
+    timeoutMs: ROUTING_TIMEOUT_MS,
+  },
 });
+if (!config.ORS_API_KEY) {
+  logger.warn('ORS_API_KEY is not set; distances use the straight-line fallback');
+}
 
 const server = app.listen(config.PORT, () => {
   logger.info({ port: config.PORT }, 'API listening');

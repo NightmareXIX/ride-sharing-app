@@ -17,6 +17,13 @@ const envSchema = databaseEnvSchema
     // Browsers only send Secure cookies over HTTPS (NFR-5). Local Docker serves plain
     // http://localhost, so it turns this off explicitly.
     COOKIE_SECURE: z.stringbool().optional(),
+    // OpenRouteService key for road distances. Unset (or empty, as compose passes it)
+    // means every distance uses the straight-line fallback (NFR-13).
+    ORS_API_KEY: z
+      .string()
+      .optional()
+      .transform((key) => key || undefined),
+    ORS_BASE_URL: z.url().default('https://api.openrouteservice.org'),
   })
   .transform((env) => ({
     ...env,

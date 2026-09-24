@@ -29,6 +29,13 @@
       "when": 1790271061171,
       "tag": "0003_add_vehicle_availability",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790271258479,
+      "tag": "0004_create_distance_cache",
+      "breakpoints": true
     }
   ]
 }
