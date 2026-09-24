@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Test output
+coverage/
+
+# Environment — only the example file is tracked
+.env
+.env.*
+!.env.example
+
+# Logs and OS noise
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Third-party brief — not ours to publish
+docs/Dhaka_Tesla_Pool_PRD_Internship.docx
+
+# Claude Code / agent tooling — local only
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+.claude.json
