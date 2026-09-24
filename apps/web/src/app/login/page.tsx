@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 import { AuthShell } from '@/components/AuthShell';
+import { RedirectIfSignedIn } from '@/components/RedirectIfSignedIn';
 import { FormAlert, SubmitButton, TextField } from '@/components/forms';
 import { homePath, type Account } from '@/lib/account';
 import { api, ApiError, fieldErrors } from '@/lib/api';
@@ -48,6 +49,7 @@ export default function LoginPage() {
         </>
       }
     >
+      <RedirectIfSignedIn />
       <form onSubmit={onSubmit} noValidate className="space-y-4">
         <FormAlert>{alert}</FormAlert>
         <TextField
