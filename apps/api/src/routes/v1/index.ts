@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { SessionConfig } from '../../auth/session.js';
 import type { Database } from '../../db/client.js';
 import { authRouter } from './auth.js';
+import { driverRouter } from './driver.js';
 import { meRouter } from './me.js';
 
 export interface V1Deps {
@@ -14,5 +15,6 @@ export function v1Router(deps: V1Deps): Router {
   const router = Router();
   router.use('/auth', authRouter(deps));
   router.use('/me', meRouter(deps));
+  router.use('/driver', driverRouter(deps));
   return router;
 }
