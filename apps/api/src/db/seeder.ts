@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import type { Database } from './client.js';
-import { users, wallets, type NewUser } from './schema/index.js';
+import { users, vehicles, wallets, type NewUser } from './schema/index.js';
 
 // Demo accounts are meant to be public: they are listed in the README (FR-S2).
 export const DEMO_PASSWORD = 'TeslaPool#2026';
@@ -16,6 +16,9 @@ export const STORY_CAST: ReadonlyArray<Omit<NewUser, 'passwordHash'>> = [
   { name: 'Rafiq', email: 'rafiq@teslapool.test', gender: 'male', role: 'passenger' },
   { name: 'Shirin', email: 'shirin@teslapool.test', gender: 'female', role: 'passenger' },
 ];
+
+// Jashim's Tesla from the brief.
+export const STORY_VEHICLE = { driverEmail: 'jashim@teslapool.test', name: 'Bullet', capacity: 3 };
 
 // Safe to run on every start (NFR-31): existing rows are left untouched, so restarting
 // the API never resets someone's demo progress. Returns the emails actually inserted.
@@ -43,6 +46,17 @@ export async function seedStoryCast(db: Database): Promise<string[]> {
       .insert(wallets)
       .values(cast.map((member) => ({ userId: member.id })))
       .onConflictDoNothing({ target: wallets.userId });
+
+    const [driver] = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, STORY_VEHICLE.driverEmail));
+    if (driver) {
+      await tx
+        .insert(vehicles)
+        .values({ driverId: driver.id, name: STORY_VEHICLE.name, capacity: STORY_VEHICLE.capacity })
+        .onConflictDoNothing({ target: vehicles.driverId });
+    }
 
     return inserted.map((row) => row.email);
   });

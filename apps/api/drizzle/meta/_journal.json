@@ -15,6 +15,13 @@
       "when": 1790264257805,
       "tag": "0001_create_wallets",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790264316779,
+      "tag": "0002_create_vehicles",
+      "breakpoints": true
     }
   ]
 }
