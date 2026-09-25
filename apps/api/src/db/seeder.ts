@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { hashPassword } from '../auth/password.js';
 import type { Database } from './client.js';
 import { users, vehicles, wallets, type NewUser } from './schema/index.js';
@@ -15,8 +15,14 @@ export const STORY_CAST: ReadonlyArray<Omit<NewUser, 'passwordHash'>> = [
   { name: 'Shirin', email: 'shirin@teslapool.test', gender: 'female', role: 'passenger' },
 ];
 
-// Jashim's Tesla from the brief.
-export const STORY_VEHICLE = { driverEmail: 'jashim@teslapool.test', name: 'Bullet', capacity: 3 };
+// Jashim's Tesla from the brief. It starts offline at Banani Road 11, where the story
+// begins, so Jashim can go online straight away in the demo.
+export const STORY_VEHICLE = {
+  driverEmail: 'jashim@teslapool.test',
+  name: 'Bullet',
+  capacity: 3,
+  location: { lat: 23.7937, lng: 90.4066 },
+};
 
 // Safe to run on every start (NFR-31): existing rows are left untouched, so restarting
 // the API never resets someone's demo progress. Returns the emails actually inserted.
@@ -54,6 +60,12 @@ export async function seedStoryCast(db: Database): Promise<string[]> {
         .insert(vehicles)
         .values({ driverId: driver.id, name: STORY_VEHICLE.name, capacity: STORY_VEHICLE.capacity })
         .onConflictDoNothing({ target: vehicles.driverId });
+
+      // Only a Tesla with no location yet, so a location Jashim chose survives restarts.
+      await tx
+        .update(vehicles)
+        .set({ currentLat: STORY_VEHICLE.location.lat, currentLng: STORY_VEHICLE.location.lng })
+        .where(and(eq(vehicles.driverId, driver.id), isNull(vehicles.currentLat)));
     }
 
     return inserted.map((row) => row.email);

@@ -5,6 +5,7 @@ import type { Database } from '../db/client.js';
 import { isUniqueViolation } from '../db/errors.js';
 import { users, vehicles, wallets, type User, type Vehicle } from '../db/schema/index.js';
 import { AppError } from '../http/errors.js';
+import { getCurrentBooking, type BookingView } from './bookings.js';
 
 // What the signed-in user sees about themselves: the body of GET /me.
 export interface Account {
@@ -12,6 +13,8 @@ export interface Account {
   // Money travels as a string such as "0.00", never a float.
   wallet: { balance: string };
   vehicle: Pick<Vehicle, 'id' | 'name' | 'capacity'> | null;
+  // The passenger's active ride, if any. Always null for a driver.
+  currentBooking: BookingView | null;
 }
 
 interface SignUpFields {
@@ -68,7 +71,7 @@ export async function signUp(db: Database, input: SignUpInput): Promise<Account>
         vehicle = inserted ?? null;
       }
 
-      return { user, wallet, vehicle };
+      return { user, wallet, vehicle, currentBooking: null };
     });
   } catch (err) {
     // The unique constraint decides, not a lookup first, so two racing sign-ups with one
@@ -127,5 +130,6 @@ export async function getAccount(db: Database, userId: string): Promise<Account 
       row.vehicleId !== null && row.vehicleName !== null && row.vehicleCapacity !== null
         ? { id: row.vehicleId, name: row.vehicleName, capacity: row.vehicleCapacity }
         : null,
+    currentBooking: row.user.role === 'passenger' ? await getCurrentBooking(db, userId) : null,
   };
 }

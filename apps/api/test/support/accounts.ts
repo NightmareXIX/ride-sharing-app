@@ -5,9 +5,10 @@ import type { TestServer } from './server.js';
 
 export const PASSWORD = 'correct-horse-battery';
 
-// Empties every table; users cascades to wallets and vehicles.
+// Empties every table. users cascades to wallets, vehicles, bookings and their history;
+// the distance cache stands alone, and a routed distance left there would leak between tests.
 export async function resetDb(pool: pg.Pool): Promise<void> {
-  await pool.query('TRUNCATE users CASCADE');
+  await pool.query('TRUNCATE users, distance_cache CASCADE');
 }
 
 export function passengerSignUp(overrides: Record<string, unknown> = {}) {
@@ -33,17 +34,31 @@ export function driverSignUp(overrides: Record<string, unknown> = {}) {
   };
 }
 
+export function sendJson(
+  server: TestServer,
+  method: 'POST' | 'PUT',
+  path: string,
+  body: unknown,
+  cookie?: string,
+): Promise<Response> {
+  return fetch(server.url(path), {
+    method,
+    headers: { 'Content-Type': 'application/json', ...(cookie && { Cookie: cookie }) },
+    body: JSON.stringify(body),
+  });
+}
+
 export function postJson(
   server: TestServer,
   path: string,
   body: unknown,
   cookie?: string,
 ): Promise<Response> {
-  return fetch(server.url(path), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(cookie && { Cookie: cookie }) },
-    body: JSON.stringify(body),
-  });
+  return sendJson(server, 'POST', path, body, cookie);
+}
+
+export function getJson(server: TestServer, path: string, cookie?: string): Promise<Response> {
+  return fetch(server.url(path), { headers: cookie ? { Cookie: cookie } : {} });
 }
 
 // The session cookie a response set, parsed, or undefined if it set none.

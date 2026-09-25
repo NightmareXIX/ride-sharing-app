@@ -63,6 +63,7 @@ describe('sign-up (FR-P1, FR-D1, FR-W1)', () => {
       },
       wallet: { balance: '0.00' },
       vehicle: null,
+      currentBooking: null,
     });
   });
 

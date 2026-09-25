@@ -7,3 +7,12 @@ export function formatTaka(amount: string): string {
   const cents = fraction.padEnd(2, '0').slice(0, 2);
   return `${negative ? '-' : ''}৳ ${grouped}.${cents}`;
 }
+
+// An API money string such as "130.5" or "-30.00" as whole poysha, for comparing amounts
+// exactly without floating point.
+export function toPoysha(amount: string): bigint {
+  const negative = amount.startsWith('-');
+  const [whole = '0', fraction = ''] = amount.replace(/^[-+]/, '').split('.');
+  const poysha = BigInt(whole || '0') * 100n + BigInt(fraction.padEnd(2, '0').slice(0, 2));
+  return negative ? -poysha : poysha;
+}

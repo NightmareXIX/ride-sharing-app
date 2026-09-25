@@ -5,9 +5,11 @@ Share a seat. Split the fare. Survive Dhaka traffic.
 A ride-pooling MVP. Passengers request rides, and a driver accepts them into a shared Tesla.
 The Tesla never carries more people than it has seats, and every passenger pays their own fare.
 
-> **Status:** phases 0 (foundations) and 1 (accounts) are done. People can sign up as a
-> passenger or as a driver with their Tesla, sign in and out, and see their TeslaPay
-> balance. Ride features arrive phase by phase; see [the development plan](docs/Dhaka%20Tesla%20Pool%20—%20Development%20Plan.md).
+> **Status:** phases 0 to 2 are done. People can sign up as a passenger or a driver, and
+> sign in and out. A driver sets their Tesla's location on the map and goes online. A
+> passenger picks a trip on the map, sees the estimated fare, requests the ride and can
+> cancel it while it waits. Drivers accepting requests arrive in phase 3; see
+> [the development plan](docs/Dhaka%20Tesla%20Pool%20—%20Development%20Plan.md).
 
 ## Contents
 
@@ -39,20 +41,22 @@ instant, and it has to keep enough history to explain afterwards exactly what ha
 
 The specs are the source of truth for every phase:
 
-| Document                                                                            | What it holds                                                |
-| ----------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| [Functional requirements](docs/Dhaka_Tesla_Pool_Functional_Requirements.md)         | FR-\* IDs, booking state machine, fare formulas, consistency |
-| [Non-functional requirements](docs/Dhaka_Tesla_Pool_Non_Functional_Requirements.md) | NFR-\* IDs: speed, security, reliability, testing, API rules |
-| [Core entities](docs/Dhaka_Tesla_Pool_Core_Entities.md)                             | Entities and the ERD                                         |
-| [API routes](docs/Dhaka_Tesla_Pool_API_Routes.md)                                   | Every route, grouped by role                                 |
-| [Development plan](docs/Dhaka%20Tesla%20Pool%20—%20Development%20Plan.md)           | Phases 0–9 and the workflow for each phase                   |
-| [Phase 1 LLD: accounts](docs/lld/phase-1-accounts.md)                               | Tables, sessions, routes and tests for sign-up and sign-in   |
+| Document                                                                            | What it holds                                                  |
+| ----------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| [Functional requirements](docs/Dhaka_Tesla_Pool_Functional_Requirements.md)         | FR-\* IDs, booking state machine, fare formulas, consistency   |
+| [Non-functional requirements](docs/Dhaka_Tesla_Pool_Non_Functional_Requirements.md) | NFR-\* IDs: speed, security, reliability, testing, API rules   |
+| [Core entities](docs/Dhaka_Tesla_Pool_Core_Entities.md)                             | Entities and the ERD                                           |
+| [API routes](docs/Dhaka_Tesla_Pool_API_Routes.md)                                   | Every route, grouped by role                                   |
+| [Development plan](docs/Dhaka%20Tesla%20Pool%20—%20Development%20Plan.md)           | Phases 0–9 and the workflow for each phase                     |
+| [Phase 1 LLD: accounts](docs/lld/phase-1-accounts.md)                               | Tables, sessions, routes and tests for sign-up and sign-in     |
+| [Phase 2 LLD: ride requests](docs/lld/phase-2-ride-request.md)                      | Availability, road distance, fare estimate, request and cancel |
 
 - Architecture: [docs/Architecture Diagram-selection.png](docs/Architecture%20Diagram-selection.png)
 - ERD: [docs/Dhaka Tesla Pool ERD-selection.png](docs/Dhaka%20Tesla%20Pool%20ERD-selection.png)
 
 The ERD shows the target schema. The database grows one migration per phase, so today it
-holds `users`, `wallets` and `vehicles`.
+holds `users`, `wallets`, `vehicles` (with online status and location), `bookings`,
+`booking_status_history` and `distance_cache`.
 
 The browser talks only to the Next.js site. The site proxies `/api/v1/*` to the Express
 API, so the login cookie is first-party even though the two run on different hosts.
@@ -61,22 +65,23 @@ API, so the login cookie is first-party even though the two run on different hos
 
 The brief fixes the language family, React/Next.js and Node.js. The rest is our choice.
 
-| Part           | Pick                                         | Alternatives considered | Why it fits a ride-pooling MVP                                                                                                                                                                                                                                | What would make us switch                                                                                      |
-| -------------- | -------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Language       | TypeScript (web and API)                     | JavaScript              | One type system from the database to the screen, which catches shape mismatches early (NFR-25).                                                                                                                                                               | Nothing realistic for this project.                                                                            |
-| Frontend       | Next.js (App Router)                         | React + Vite + a router | Routing and layouts built in. Its rewrites give a same-origin proxy to the API, so the auth cookie works without CORS.                                                                                                                                        | A fully static client with no proxy need.                                                                      |
-| Backend        | Express 5                                    | Fastify, NestJS         | Small and well understood. Express 5 forwards async errors to the error handler, which is all we need. We didn't want NestJS's structure for about 25 routes.                                                                                                 | Throughput limits (Fastify), or a team that wants enforced module structure (NestJS).                          |
-| Database       | PostgreSQL 17                                | MySQL, SQLite           | Seat capacity and single-claim rules need row locks, conditional `UPDATE … WHERE`, CHECK constraints, partial unique indexes and triggers. Postgres has all of them. SQLite locks the whole database on writes, so it can't show a real concurrent seat race. | Nothing at MVP scale. At very large scale we'd shard or add read replicas; see the HLD.                        |
-| ORM            | Drizzle (+ drizzle-kit)                      | Prisma, Kysely          | Queries read like the SQL they run, so the concurrency rules (FR-C1–C7) stay visible and easy to defend. drizzle-kit writes plain SQL migration files we can review and hand-edit. `numeric` comes back as a string, which suits exact money maths.           | If we needed hand-written SQL everywhere we'd use Kysely. If the team preferred a heavier abstraction, Prisma. |
-| Validation     | Zod                                          | Joi                     | TypeScript types are inferred from the schemas, so a validated request body is also typed. It validates env config at startup too (NFR-10, NFR-11).                                                                                                           | Nothing expected.                                                                                              |
-| Tests          | Vitest                                       | Jest                    | Runs TypeScript and ESM natively with no transform setup. Tests call the real HTTP stack with `fetch` against a real Postgres, with no extra test libraries.                                                                                                  | Nothing expected.                                                                                              |
-| Styling        | Tailwind CSS                                 | CSS Modules             | Responsive layouts for phones and laptops (NFR-21) without a growing set of CSS files.                                                                                                                                                                        | A designer-owned design system with its own CSS.                                                               |
-| Map (phase 2)  | react-leaflet + OpenStreetMap tiles          | MapLibre                | Leaflet is small, needs no API key and shows the OSM credit by default (NFR-24).                                                                                                                                                                              | Vector maps or heavy map interaction (MapLibre).                                                               |
-| Road distances | OpenRouteService, fallback haversine × 1.3   | OSRM, Dhaka zone table  | A free key with enough quota for a demo. The fallback keeps the app working on an evaluator's machine with no key (NFR-13).                                                                                                                                   | Quota limits: self-host OSRM.                                                                                  |
-| Logging        | pino + pino-http                             | winston, morgan         | Structured JSON with a request id on every line, and header-free entries so cookies never reach the logs (NFR-42/43).                                                                                                                                         | A hosted log pipeline with its own agent.                                                                      |
-| Passwords      | bcryptjs                                     | bcrypt (native), argon2 | The bcrypt algorithm (NFR-7) in pure JS, so the Alpine images need no native build step.                                                                                                                                                                      | Login throughput: switch to native bcrypt or argon2.                                                           |
-| Hosting        | Vercel, Render (Singapore), Neon (Singapore) | Railway, Fly.io         | All free tiers. The API and database share a region, which keeps query latency low.                                                                                                                                                                           | Free-tier sleep becomes unacceptable.                                                                          |
-| CI             | GitHub Actions                               | —                       | Runs format, lint, typecheck, build and tests against a Postgres service on every PR (NFR-30).                                                                                                                                                                | —                                                                                                              |
+| Part           | Pick                                         | Alternatives considered    | Why it fits a ride-pooling MVP                                                                                                                                                                                                                                | What would make us switch                                                                                      |
+| -------------- | -------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Language       | TypeScript (web and API)                     | JavaScript                 | One type system from the database to the screen, which catches shape mismatches early (NFR-25).                                                                                                                                                               | Nothing realistic for this project.                                                                            |
+| Frontend       | Next.js (App Router)                         | React + Vite + a router    | Routing and layouts built in. Its rewrites give a same-origin proxy to the API, so the auth cookie works without CORS.                                                                                                                                        | A fully static client with no proxy need.                                                                      |
+| Backend        | Express 5                                    | Fastify, NestJS            | Small and well understood. Express 5 forwards async errors to the error handler, which is all we need. We didn't want NestJS's structure for about 25 routes.                                                                                                 | Throughput limits (Fastify), or a team that wants enforced module structure (NestJS).                          |
+| Database       | PostgreSQL 17                                | MySQL, SQLite              | Seat capacity and single-claim rules need row locks, conditional `UPDATE … WHERE`, CHECK constraints, partial unique indexes and triggers. Postgres has all of them. SQLite locks the whole database on writes, so it can't show a real concurrent seat race. | Nothing at MVP scale. At very large scale we'd shard or add read replicas; see the HLD.                        |
+| ORM            | Drizzle (+ drizzle-kit)                      | Prisma, Kysely             | Queries read like the SQL they run, so the concurrency rules (FR-C1–C7) stay visible and easy to defend. drizzle-kit writes plain SQL migration files we can review and hand-edit. `numeric` comes back as a string, which suits exact money maths.           | If we needed hand-written SQL everywhere we'd use Kysely. If the team preferred a heavier abstraction, Prisma. |
+| Validation     | Zod                                          | Joi                        | TypeScript types are inferred from the schemas, so a validated request body is also typed. It validates env config at startup too (NFR-10, NFR-11).                                                                                                           | Nothing expected.                                                                                              |
+| Tests          | Vitest                                       | Jest                       | Runs TypeScript and ESM natively with no transform setup. Tests call the real HTTP stack with `fetch` against a real Postgres, with no extra test libraries.                                                                                                  | Nothing expected.                                                                                              |
+| Money maths    | big.js                                       | decimal.js, integer poysha | Exact decimal arithmetic with half-up rounding in a few KB. Fares multiply by 1.05 and 1.15, and plain JavaScript numbers get some of them wrong: (30 + 20 × 0.115) × 1.15 comes out as 37.144999…, not 37.145.                                               | A need for functions big.js lacks (decimal.js).                                                                |
+| Styling        | Tailwind CSS                                 | CSS Modules                | Responsive layouts for phones and laptops (NFR-21) without a growing set of CSS files.                                                                                                                                                                        | A designer-owned design system with its own CSS.                                                               |
+| Map            | react-leaflet + OpenStreetMap tiles          | MapLibre                   | Leaflet is small, needs no API key and shows the OSM credit by default (NFR-24).                                                                                                                                                                              | Vector maps or heavy map interaction (MapLibre).                                                               |
+| Road distances | OpenRouteService, fallback haversine × 1.3   | OSRM, Dhaka zone table     | A free key with enough quota for a demo. The fallback keeps the app working on an evaluator's machine with no key (NFR-13).                                                                                                                                   | Quota limits: self-host OSRM.                                                                                  |
+| Logging        | pino + pino-http                             | winston, morgan            | Structured JSON with a request id on every line, and header-free entries so cookies never reach the logs (NFR-42/43).                                                                                                                                         | A hosted log pipeline with its own agent.                                                                      |
+| Passwords      | bcryptjs                                     | bcrypt (native), argon2    | The bcrypt algorithm (NFR-7) in pure JS, so the Alpine images need no native build step.                                                                                                                                                                      | Login throughput: switch to native bcrypt or argon2.                                                           |
+| Hosting        | Vercel, Render (Singapore), Neon (Singapore) | Railway, Fly.io            | All free tiers. The API and database share a region, which keeps query latency low.                                                                                                                                                                           | Free-tier sleep becomes unacceptable.                                                                          |
+| CI             | GitHub Actions                               | —                          | Runs format, lint, typecheck, build and tests against a Postgres service on every PR (NFR-30).                                                                                                                                                                | —                                                                                                              |
 
 Version pins worth knowing: TypeScript is held at 6.0 because typescript-eslint doesn't
 support TypeScript 7 yet. ESLint is held at 9 because Next's lint plugins don't support
@@ -85,7 +90,9 @@ ESLint 10 yet.
 **Money** is stored as `DECIMAL(10,2)` and handled with decimal arithmetic, never floats. It
 travels over the API as strings like `"116.00"`. We chose decimal taka over integer poysha
 because the fare formula multiplies by factors like 1.05 and 1.15. Keeping full precision
-until one final half-up rounding (FR-F5) makes every fare checkable by hand.
+until one final half-up rounding (FR-F5) makes every fare checkable by hand. The API does
+that maths with big.js; the website only formats the strings it receives, and compares
+amounts in whole poysha.
 
 ## Project structure
 
@@ -98,6 +105,8 @@ apps/
       config.ts        env validation
       http/            error envelope and middleware (request log, auth, role checks)
       auth/            password hashing and the signed session cookie
+      domain/          pure rules with no I/O: fare formula, booking state machine
+      geo/             Dhaka service area, OpenRouteService client, ×1.3 fallback
       services/        business rules and transactions, called by the routes
       routes/          /health and /api/v1
       db/              schema, client, migrator, seeder and their CLIs
@@ -133,6 +142,10 @@ applies migrations and loads the seed, then starts listening. The website waits 
 API reports ready. No `.env` file is needed. To change ports or credentials, copy
 `.env.example` to `.env`.
 
+Road distances come from OpenRouteService when `ORS_API_KEY` is set (a free key is enough).
+Without it, every distance uses the straight-line fallback and the fare estimate says so.
+Everything still works.
+
 Reset everything, including the database volume, with `docker compose down -v`.
 
 ## Run it without Docker
@@ -152,18 +165,20 @@ npm run dev -w @tesla-pool/web       # http://localhost:3000, in a second termin
 All of them are listed in [.env.example](.env.example) with safe local defaults. Real
 secrets live only in the hosting platforms' settings (NFR-11).
 
-| Variable                                            | Used by     | Purpose                                                           |
-| --------------------------------------------------- | ----------- | ----------------------------------------------------------------- |
-| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | compose     | Database credentials; compose also builds the API's URL from them |
-| `POSTGRES_PORT`, `API_PORT`, `WEB_PORT`             | compose     | Host ports                                                        |
-| `DATABASE_URL`                                      | api         | Postgres connection string (`postgres://…`)                       |
-| `PORT`                                              | api         | HTTP port, default 4000                                           |
-| `NODE_ENV`                                          | api         | `development` turns on pretty logs                                |
-| `LOG_LEVEL`                                         | api         | pino level, default `info`                                        |
-| `SESSION_SECRET`                                    | api         | Signs the login cookie; at least 32 characters. Required.         |
-| `COOKIE_SECURE`                                     | api         | `Secure` cookie flag; defaults to on when `NODE_ENV=production`   |
-| `TEST_DATABASE_URL`                                 | api tests   | Separate test database, created automatically if missing          |
-| `API_URL`                                           | web (build) | Where the proxy sends `/api/v1/*`. It's read at **build** time.   |
+| Variable                                            | Used by     | Purpose                                                                  |
+| --------------------------------------------------- | ----------- | ------------------------------------------------------------------------ |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | compose     | Database credentials; compose also builds the API's URL from them        |
+| `POSTGRES_PORT`, `API_PORT`, `WEB_PORT`             | compose     | Host ports                                                               |
+| `DATABASE_URL`                                      | api         | Postgres connection string (`postgres://…`)                              |
+| `PORT`                                              | api         | HTTP port, default 4000                                                  |
+| `NODE_ENV`                                          | api         | `development` turns on pretty logs                                       |
+| `LOG_LEVEL`                                         | api         | pino level, default `info`                                               |
+| `SESSION_SECRET`                                    | api         | Signs the login cookie; at least 32 characters. Required.                |
+| `COOKIE_SECURE`                                     | api         | `Secure` cookie flag; defaults to on when `NODE_ENV=production`          |
+| `ORS_API_KEY`                                       | api         | OpenRouteService key. Optional: unset means straight-line distance × 1.3 |
+| `ORS_BASE_URL`                                      | api         | OpenRouteService address, default `https://api.openrouteservice.org`     |
+| `TEST_DATABASE_URL`                                 | api tests   | Separate test database, created automatically if missing                 |
+| `API_URL`                                           | web (build) | Where the proxy sends `/api/v1/*`. It's read at **build** time.          |
 
 ## Migrations and seed data
 
@@ -186,9 +201,9 @@ npm run format:check
 npm run build
 ```
 
-CI runs the same steps on every pull request. Tests never call the real map service. The
-concurrency tests (from phase 4) will run against a real database and repeat many times
-(NFR-28).
+CI runs the same steps on every pull request. Tests never call the real map service: a
+local stub stands in for OpenRouteService. Concurrency tests run against a real database
+and repeat several rounds (NFR-28).
 
 Covered so far:
 
@@ -200,6 +215,17 @@ Covered so far:
 - Ten simultaneous sign-ups with one email, five rounds: exactly one account each time
 - Sign-in: a wrong password and an unknown email get the same answer
 - Sessions: missing, tampered, foreign-secret and expired tokens get 401; the wrong role gets 403
+- Driver availability: no going online without a location, locations outside Dhaka refused,
+  repeated online and offline harmless
+- Road distance: routed answers cached by direction; the fallback used only for no key, an
+  error, a quota refusal, a bad body or the 10 s timeout; a slow answer still used
+- Fare estimate: the FR §8 worked examples, half-up rounding, and a case floats get wrong
+- Booking state machine: every FR §6 transition allowed, and the listed bad ones refused
+- Ride requests: validation, balance rules, a repeated request returning the same booking,
+  and ten identical requests at once (five rounds) creating exactly one
+- Access: another passenger's booking is 404; drivers get 403 on passenger routes
+- Cancel: free while waiting, safe to repeat, and logged in a history the database won't
+  let anyone edit or delete
 
 ## Demo credentials
 
@@ -212,8 +238,13 @@ Every seeded account uses the password **`TeslaPool#2026`**.
 | Rafiq  | rafiq@teslapool.test  | passenger | male   |
 | Shirin | shirin@teslapool.test | passenger | female |
 
-Sign in at http://localhost:3000/login. Jashim drives the Tesla "Bullet" (3 seats). Every
-wallet starts at ৳ 0.00; top-ups arrive with TeslaPay in phase 6.
+Sign in at http://localhost:3000/login. Jashim drives the Tesla "Bullet" (3 seats), which
+starts offline at Banani Road 11. Every wallet starts at ৳ 0.00; top-ups arrive with
+TeslaPay in phase 6, so ride requests use Cash until then.
+
+To try phase 2: sign in as Jashim and go online. In another browser, sign in as Nusrat,
+choose Banani Road 11 → Mohakhali, get the estimate and request the ride. Nusrat can cancel
+it while it waits.
 
 ## API overview
 
@@ -238,6 +269,24 @@ Signing in sets `tp_session`, an HttpOnly, SameSite=Lax cookie that lasts 24 hou
 (NFR-6). It holds a signed token (HS256 JWT), so there is no sessions table. Request and
 response shapes are in the [phase 1 LLD](docs/lld/phase-1-accounts.md#4-routes).
 
+Ride requests (phase 2), all under `/api/v1`:
+
+| Method | Route                      | Who       | Does                                                                     | Errors                                                                               |
+| ------ | -------------------------- | --------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| GET    | `/driver/vehicle`          | driver    | The Tesla: seats, `isOnline`, `location`                                 | 404                                                                                  |
+| POST   | `/driver/vehicle/online`   | driver    | Goes online; repeating it is harmless                                    | 422 `LOCATION_REQUIRED`                                                              |
+| POST   | `/driver/vehicle/offline`  | driver    | Goes offline; repeating it is harmless                                   | —                                                                                    |
+| PUT    | `/driver/vehicle/location` | driver    | Sets `{ lat, lng }` inside Dhaka                                         | 400                                                                                  |
+| POST   | `/fare-estimates`          | passenger | Road distance and estimate, every step as a string. Books nothing.       | 400                                                                                  |
+| POST   | `/bookings`                | passenger | Requests a ride. **201**; the same request again returns it with **200** | 400, 409 `ACTIVE_BOOKING_EXISTS`, 422 `NEGATIVE_BALANCE`, 422 `INSUFFICIENT_BALANCE` |
+| GET    | `/bookings/current`        | passenger | The active booking or `null`; the app polls it every 4 s                 | —                                                                                    |
+| GET    | `/bookings/:id`            | passenger | One of the passenger's own bookings                                      | 404                                                                                  |
+| POST   | `/bookings/:id/cancel`     | passenger | Cancels a waiting request for free; repeating it is harmless             | 404, 409 `INVALID_TRANSITION`                                                        |
+
+A route for the other role returns 403, and no session returns 401. `/me` also returns the
+passenger's `currentBooking`. Shapes and rules are in the
+[phase 2 LLD](docs/lld/phase-2-ride-request.md#3-routes).
+
 Every error has the same shape (NFR-35):
 
 ```json
@@ -256,7 +305,16 @@ request's log line (NFR-42).
 - **Seat limit.** A Tesla has 1 to 6 passenger seats. The largest model, the Model X,
   seats 6 besides the driver.
 - **Wallets start empty.** Balances stay at ৳ 0.00 until the TeslaPay ledger exists
-  (phase 6), so every taka in a wallet is backed by a ledger entry (NFR-39).
+  (phase 6), so every taka in a wallet is backed by a ledger entry (NFR-39). Until then a
+  TeslaPay request is refused with `INSUFFICIENT_BALANCE`.
+- **Dhaka only.** Pickups, destinations and driver locations must fall inside a box from
+  Uttara to Old Dhaka (latitude 23.65–23.95, longitude 90.30–90.55).
+- **Short trips.** Pickup and destination must be at least 100 m apart in a straight line.
+- **Seats.** A request can't ask for more seats than the largest registered Tesla has.
+- **Bullet's start.** The seed parks Bullet at Banani Road 11, where the story begins.
+- **Two rules arrive early.** One active booking per passenger (FR-C6) and the balance
+  checks (FR-W3, FR-W7) were planned for phases 4 and 6. They are enforced from phase 2
+  because creating a request depends on them.
 
 ## Known limitations
 
@@ -267,6 +325,11 @@ the full list. Specific to the current state:
   point at a different API.
 - Signing out clears the cookie, but sessions are stateless. A token copied before
   sign-out keeps working until its 24 hours are up.
+- Without `ORS_API_KEY`, every distance is straight-line × 1.3, so estimates are
+  approximate. The screen says so.
+- Choosing places on the map needs a mouse or touch. The quick-pick buttons work from the
+  keyboard.
+- Map tiles come from the public OpenStreetMap servers, which suit a demo but not heavy use.
 - drizzle-kit, a dev-only tool, pulls in an old esbuild that `npm audit` flags. It never
   reaches the Docker images.
 

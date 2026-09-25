@@ -56,6 +56,7 @@ describe('GET /me', () => {
       },
       wallet: { balance: '0.00' },
       vehicle: { id: expect.any(String), name: 'Bullet', capacity: 3 },
+      currentBooking: null,
     });
   });
 

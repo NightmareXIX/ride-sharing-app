@@ -7,7 +7,13 @@ export type ErrorCode =
   | 'INTERNAL_ERROR'
   // Accounts (phase 1)
   | 'EMAIL_TAKEN'
-  | 'INVALID_CREDENTIALS';
+  | 'INVALID_CREDENTIALS'
+  // Ride requests (phase 2)
+  | 'LOCATION_REQUIRED'
+  | 'ACTIVE_BOOKING_EXISTS'
+  | 'NEGATIVE_BALANCE'
+  | 'INSUFFICIENT_BALANCE'
+  | 'INVALID_TRANSITION';
 
 // Every error response has this shape (NFR-35).
 export interface ErrorBody {

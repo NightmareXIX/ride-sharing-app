@@ -5,6 +5,9 @@ import * as schema from './schema/index.js';
 
 export type Database = NodePgDatabase<typeof schema>;
 
+// The handle a db.transaction() callback receives.
+export type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
+
 // Timestamps are `timestamptz`, so values are stored in UTC and come back as absolute
 // instants whatever the session time zone is (NFR-38).
 export function createPool(databaseUrl: string, logger?: Logger): pg.Pool {

@@ -33,6 +33,8 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:-local-dev-only-session-secret-change-me}
       # The site is served over plain http://localhost, where Secure cookies are dropped.
       COOKIE_SECURE: 'false'
+      # Optional. Without it, distances use the straight-line fallback (NFR-13).
+      ORS_API_KEY: ${ORS_API_KEY:-}
     ports:
       - '${API_PORT:-4000}:4000'
     # The API starts only once Postgres accepts connections (NFR-15).
