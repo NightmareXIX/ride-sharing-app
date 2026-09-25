@@ -1,9 +1,9 @@
 import Big from 'big.js';
-import { and, desc, eq, lt, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lt, sql, type SQL } from 'drizzle-orm';
 import type { Database, Transaction } from '../db/client.js';
 import { isUniqueViolation } from '../db/errors.js';
 import { bookingStatusHistory, wallets, walletTransactions } from '../db/schema/index.js';
-import type { TransitionReason } from '../domain/booking.js';
+import type { PaymentMethod, TransitionReason } from '../domain/booking.js';
 import {
   affectsBalance,
   MAX_BALANCE,
@@ -87,6 +87,40 @@ export async function postEntry(tx: Transaction, entry: EntryRequest): Promise<T
     .returning(entryColumns);
   if (!row) throw new Error('Inserting the wallet entry returned no row');
   return toTransactionView({ ...row, reason: null });
+}
+
+// Locks several wallets at once, always in the same order, so two transactions that each
+// need the same pair of wallets can't deadlock (FR-C7).
+async function lockWallets(tx: Transaction, userIds: string[]): Promise<void> {
+  await tx
+    .select({ id: wallets.id })
+    .from(wallets)
+    .where(inArray(wallets.userId, userIds))
+    .orderBy(asc(wallets.id))
+    .for('update');
+}
+
+export interface Settlement {
+  bookingId: string;
+  passengerId: string;
+  driverId: string;
+  paymentMethod: PaymentMethod;
+  finalFare: string;
+}
+
+// Pays for a completed ride, in the transaction that records its fare (NFR-14). TeslaPay
+// moves the fare from the passenger's wallet to the driver's (FR-W4). Cash is paid in
+// person, so it is recorded as the driver's earnings only (FR-W5). The caller has locked
+// the Tesla and the booking, so the lock order is vehicle → booking → wallets (FR-C7).
+export async function settleFare(tx: Transaction, ride: Settlement): Promise<void> {
+  const { bookingId, passengerId, driverId, finalFare: amount } = ride;
+  if (ride.paymentMethod === 'cash') {
+    await postEntry(tx, { userId: driverId, type: 'cash_earning', amount, bookingId });
+    return;
+  }
+  await lockWallets(tx, [passengerId, driverId]);
+  await postEntry(tx, { userId: passengerId, type: 'fare_payment', amount, bookingId });
+  await postEntry(tx, { userId: driverId, type: 'driver_credit', amount, bookingId });
 }
 
 const entryColumns = {

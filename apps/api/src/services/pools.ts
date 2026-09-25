@@ -48,6 +48,7 @@ import {
   writePlan,
 } from './routes.js';
 import { transitionBooking } from './transitions.js';
+import { settleFare, type Settlement } from './wallet.js';
 
 // What the trip services need beyond the database: road distances to plan routes with.
 export interface TripDeps {
@@ -675,6 +676,8 @@ interface PricedDropOff {
   version: number;
   // Null unless the passenger is aboard: there is nothing to price, and the step says why.
   fare: typeof fares.$inferInsert | null;
+  // Who pays whom, and how, once the fare is recorded.
+  settlement: Settlement | null;
 }
 
 // Prices a drop-off from the route (FR-F4, FR-F5): the pickup's reading, the drop-off's
@@ -694,6 +697,8 @@ async function priceDropOff(
       estimatedFare: bookings.estimatedFare,
       seats: bookings.seats,
       rideOption: bookings.rideOption,
+      passengerId: bookings.passengerId,
+      paymentMethod: bookings.paymentMethod,
       version: vehicles.version,
       lat: vehicles.currentLat,
       lng: vehicles.currentLng,
@@ -704,7 +709,7 @@ async function priceDropOff(
     .where(and(eq(bookings.id, bookingId), eq(vehicles.driverId, driverId)));
   if (!booking) throw notFound();
   const { version, poolId } = booking;
-  if (booking.status !== 'STARTED' || !poolId) return { version, fare: null };
+  if (booking.status !== 'STARTED' || !poolId) return { version, fare: null, settlement: null };
 
   const route = await readTripRoute(db, poolId, teslaLocation(booking.lat, booking.lng));
   const stopOf = (id: string, type: StopType) =>
@@ -756,12 +761,19 @@ async function priceDropOff(
       distanceMethod: booking.distanceMethod,
       routeDistanceMethod,
     },
+    settlement: {
+      bookingId,
+      passengerId: booking.passengerId,
+      driverId,
+      paymentMethod: booking.paymentMethod,
+      finalFare: fare.finalFare,
+    },
   };
 }
 
 // The passenger is dropped off: the booking completes, the stop's reading and the fare are
-// recorded, the seats are freed and the trip ends if nobody else is aboard, all in one
-// transaction (NFR-14). Cash is paid in person (FR-W5); ledger entries arrive in phase 6.
+// recorded, the ride is paid for, the seats are freed and the trip ends if nobody else is
+// aboard, all in one transaction (NFR-14, FR-C7).
 export async function completeTrip(
   db: Database,
   driverId: string,
@@ -769,12 +781,13 @@ export async function completeTrip(
 ): Promise<CompletedTrip> {
   await withFreshPlan(async () => {
     // The fare maths runs before the transaction, from readings that never change (NFR-41).
-    const { version, fare } = await priceDropOff(db, driverId, bookingId);
+    const { version, fare, settlement } = await priceDropOff(db, driverId, bookingId);
     await takeStep(db, driverId, bookingId, 'complete', {
       planned: version,
       andThen: async (tx, { vehicleId, poolId, seats }) => {
-        if (!fare) throw new StaleRoute();
+        if (!fare || !settlement) throw new StaleRoute();
         await tx.insert(fares).values(fare);
+        await settleFare(tx, settlement);
         await releaseSeats(tx, vehicleId, seats);
         await finishPoolIfDone(tx, poolId);
       },
