@@ -86,6 +86,7 @@ export function ChoiceGroup<T extends string>({
   onChange,
   error,
   hint,
+  columns = 2,
 }: {
   name: string;
   legend: string;
@@ -94,12 +95,13 @@ export function ChoiceGroup<T extends string>({
   onChange?: (value: T) => void;
   error?: string;
   hint?: string;
+  columns?: 2 | 3;
 }) {
   const errorId = `field-${name}-error`;
   return (
     <fieldset aria-describedby={error ? errorId : undefined}>
       <legend className="mb-1.5 block text-sm font-medium text-slate-700">{legend}</legend>
-      <div className="grid grid-cols-2 gap-2">
+      <div className={`grid gap-2 ${columns === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
         {options.map((option) => (
           <label
             key={option.value}
