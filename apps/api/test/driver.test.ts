@@ -11,6 +11,7 @@ import {
   signUpAs,
 } from './support/accounts.js';
 import { TEST_DATABASE_URL } from './support/db.js';
+import { acceptRequest, errorCode, goOnlineAt, requestRide } from './support/rides.js';
 import { startTestServer, type TestServer } from './support/server.js';
 
 let pool: pg.Pool;
@@ -118,5 +119,32 @@ describe('driver Tesla (FR-D3, FR-D4)', () => {
     expect((await goOnline(passenger)).status).toBe(403);
     expect((await setLocation(BANANI, passenger)).status).toBe(403);
     expect((await getJson(server, '/api/v1/driver/vehicle')).status).toBe(401);
+  });
+});
+
+describe('a driver with a passenger (FR-D3)', () => {
+  beforeEach(async () => {
+    const nusrat = await signUpAs(server, passengerSignUp());
+    await goOnlineAt(server, driver);
+    const booking = await requestRide(server, nusrat);
+    expect((await acceptRequest(server, driver, booking.id)).status).toBe(200);
+  });
+
+  it("can't go offline", async () => {
+    const res = await goOffline();
+    expect(res.status).toBe(409);
+    expect(await errorCode(res)).toBe('HAS_ACTIVE_BOOKINGS');
+    const { vehicle } = (await (
+      await getJson(server, '/api/v1/driver/vehicle', driver)
+    ).json()) as {
+      vehicle: { isOnline: boolean };
+    };
+    expect(vehicle.isOnline).toBe(true);
+  });
+
+  it("can't move the Tesla", async () => {
+    const res = await setLocation({ lat: 23.78, lng: 90.41 });
+    expect(res.status).toBe(409);
+    expect(await errorCode(res)).toBe('HAS_ACTIVE_BOOKINGS');
   });
 });
