@@ -19,6 +19,7 @@ export const ASSIGNED_STATUSES = [
   'DRIVER_ARRIVED',
   'STARTED',
 ] as const satisfies BookingStatus[];
+export type AssignedStatus = (typeof ASSIGNED_STATUSES)[number];
 
 // Why a status changed, as recorded in the history (FR-R11).
 export type TransitionReason =

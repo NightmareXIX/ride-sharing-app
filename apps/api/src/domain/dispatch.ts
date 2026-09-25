@@ -1,5 +1,6 @@
 import { haversineKm } from '../geo/haversine.js';
 import type { LatLng } from '../geo/serviceArea.js';
+import type { AssignedStatus } from './booking.js';
 
 // Which requests a driver is shown, kept free of I/O so it is easy to test (NFR-26).
 // Phase 5 grows this into the matching rule (FR-L3).
@@ -33,4 +34,17 @@ export function boundingBox(center: LatLng, radiusKm: number) {
     minLng: center.lng - dLng,
     maxLng: center.lng + dLng,
   };
+}
+
+// The one step a driver can take next for a passenger in their Tesla (FR-D10).
+export type NextAction = 'arrive' | 'start' | 'complete';
+
+const NEXT_ACTIONS: Record<AssignedStatus, NextAction> = {
+  ACCEPTED: 'arrive',
+  DRIVER_ARRIVED: 'start',
+  STARTED: 'complete',
+};
+
+export function nextAction(status: AssignedStatus): NextAction {
+  return NEXT_ACTIONS[status];
 }
