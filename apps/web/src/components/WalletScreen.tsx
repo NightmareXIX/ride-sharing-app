@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Role } from '@/lib/account';
 import { api } from '@/lib/api';
 import { formatTaka } from '@/lib/money';
-import type { TopUpResult, TransactionPage, Wallet, WalletTransaction } from '@/lib/wallet';
+import { usePagedList } from '@/lib/usePagedList';
+import type { TopUpResult, TransactionPage, Wallet } from '@/lib/wallet';
 import { Card } from './AppShell';
 import { primaryButton } from './buttons';
 import { TopUpForm } from './TopUpForm';
@@ -12,12 +13,16 @@ import { WalletHistory } from './WalletHistory';
 
 const PAGE_SIZE = 20;
 
+// A page of the wallet's history; the first page when there is no cursor.
+async function readTransactions(cursor: string | null) {
+  const query = `limit=${PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+  const page = await api<TransactionPage>(`/wallet/transactions?${query}`);
+  return { items: page.transactions, nextCursor: page.nextCursor };
+}
+
 // The balance and the first page of history, read afresh.
 function readWallet() {
-  return Promise.all([
-    api<{ wallet: Wallet }>('/wallet'),
-    api<TransactionPage>(`/wallet/transactions?limit=${PAGE_SIZE}`),
-  ]);
+  return Promise.all([api<{ wallet: Wallet }>('/wallet'), readTransactions(null)]);
 }
 
 // A user's TeslaPay wallet: the balance, a top-up for passengers, and every movement.
@@ -25,17 +30,16 @@ export function WalletScreen({ role }: { role: Role }) {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [loadError, setLoadError] = useState('');
   const [attempt, setAttempt] = useState(0);
-  const [entries, setEntries] = useState<WalletTransaction[] | null>(null);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [historyError, setHistoryError] = useState('');
+  const history = usePagedList(readTransactions);
+  const { showFirst, setError: setHistoryError } = history;
 
-  const show = useCallback(([walletBody, page]: Awaited<ReturnType<typeof readWallet>>) => {
-    setWallet(walletBody.wallet);
-    setEntries(page.transactions);
-    setCursor(page.nextCursor);
-    setHistoryError('');
-  }, []);
+  const show = useCallback(
+    ([walletBody, page]: Awaited<ReturnType<typeof readWallet>>) => {
+      setWallet(walletBody.wallet);
+      showFirst(page);
+    },
+    [showFirst],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -51,21 +55,6 @@ export function WalletScreen({ role }: { role: Role }) {
       cancelled = true;
     };
   }, [show, attempt]);
-
-  async function loadMore() {
-    setLoadingMore(true);
-    setHistoryError('');
-    try {
-      const query = `limit=${PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
-      const page = await api<TransactionPage>(`/wallet/transactions?${query}`);
-      setEntries((shown) => [...(cursor ? (shown ?? []) : []), ...page.transactions]);
-      setCursor(page.nextCursor);
-    } catch (err) {
-      setHistoryError((err as Error).message);
-    } finally {
-      setLoadingMore(false);
-    }
-  }
 
   function toppedUp(result: TopUpResult) {
     setWallet(result.wallet);
@@ -126,11 +115,11 @@ export function WalletScreen({ role }: { role: Role }) {
         </Card>
       )}
       <WalletHistory
-        entries={entries}
-        hasMore={cursor !== null}
-        loading={loadingMore}
-        error={historyError}
-        onLoadMore={loadMore}
+        entries={history.items}
+        hasMore={history.hasMore}
+        loading={history.loading}
+        error={history.error}
+        onLoadMore={history.loadMore}
       />
     </div>
   );

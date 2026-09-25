@@ -3,7 +3,7 @@
 import { formatTaka } from '@/lib/money';
 import { formatDhakaTime } from '@/lib/time';
 import { describeTransaction, type WalletTransaction } from '@/lib/wallet';
-import { secondaryButton } from './buttons';
+import { ListFooter } from './ListFooter';
 
 function Entry({ entry }: { entry: WalletTransaction }) {
   const moneyIn = !entry.amount.startsWith('-');
@@ -66,21 +66,13 @@ export function WalletHistory({
           ))}
         </ul>
       )}
-      {error && (
-        <p role="alert" className="mt-3 text-sm text-red-700">
-          {error}
-        </p>
-      )}
-      {(hasMore || (error && entries !== null)) && (
-        <button
-          type="button"
-          onClick={onLoadMore}
-          disabled={loading}
-          className={`mt-3 w-full ${secondaryButton}`}
-        >
-          {loading ? 'Loading…' : error ? 'Try again' : 'Load more'}
-        </button>
-      )}
+      <ListFooter
+        shown={entries !== null}
+        hasMore={hasMore}
+        loading={loading}
+        error={error}
+        onLoadMore={onLoadMore}
+      />
     </section>
   );
 }
