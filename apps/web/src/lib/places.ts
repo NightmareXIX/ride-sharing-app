@@ -3,7 +3,8 @@ import { straightLineKm, formatLatLng, type LatLng, type Place } from './geo';
 // Well-known spots, for choosing a point without the map. Coordinates are approximate.
 export const QUICK_PICKS: readonly Place[] = [
   { label: 'Banani Road 11', lat: 23.7937, lng: 90.4066 },
-  { label: 'Mohakhali', lat: 23.7781, lng: 90.405 },
+  // Wireless Gate, where the road to Gulshan 1 begins, so the story's two rides can share.
+  { label: 'Mohakhali', lat: 23.7812, lng: 90.409 },
   { label: 'Gulshan 1', lat: 23.7806, lng: 90.4163 },
   { label: 'Dhanmondi 27', lat: 23.7561, lng: 90.374 },
   { label: 'Farmgate', lat: 23.7577, lng: 90.3897 },
