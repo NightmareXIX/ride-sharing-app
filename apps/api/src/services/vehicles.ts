@@ -3,6 +3,7 @@ import type { Database } from '../db/client.js';
 import { vehicles, type Vehicle } from '../db/schema/index.js';
 import type { LatLng } from '../geo/serviceArea.js';
 import { AppError } from '../http/errors.js';
+import { activePoolId } from './pools.js';
 
 // What a driver sees about their own Tesla.
 export interface DriverVehicle {
@@ -64,28 +65,55 @@ export async function goOnline(db: Database, driverId: string): Promise<DriverVe
   throw new AppError(422, 'LOCATION_REQUIRED', 'Set your location on the map before going online.');
 }
 
-// Phase 3 adds the rule that a driver with passengers can't go offline (FR-D3).
-export async function goOffline(db: Database, driverId: string): Promise<DriverVehicle> {
-  const [row] = await db
-    .update(vehicles)
-    .set({ isOnline: false, updatedAt: sql`now()` })
-    .where(byDriver(driverId))
-    .returning(vehicleColumns);
-  if (!row) throw noVehicle();
-  return toDriverVehicle(row);
+// Changes a Tesla that has no passenger. The row is locked first, so an accept already
+// running finishes before the check, and its trip is seen (FR-D3).
+async function updateIdleVehicle(
+  db: Database,
+  driverId: string,
+  set: Partial<Pick<Vehicle, 'isOnline' | 'currentLat' | 'currentLng'>>,
+  refusal: string,
+): Promise<DriverVehicle> {
+  return db.transaction(async (tx) => {
+    const [tesla] = await tx
+      .select({ id: vehicles.id })
+      .from(vehicles)
+      .where(byDriver(driverId))
+      .for('update');
+    if (!tesla) throw noVehicle();
+    if (await activePoolId(tx, tesla.id)) {
+      throw new AppError(409, 'HAS_ACTIVE_BOOKINGS', refusal);
+    }
+
+    const [row] = await tx
+      .update(vehicles)
+      .set({ ...set, updatedAt: sql`now()` })
+      .where(eq(vehicles.id, tesla.id))
+      .returning(vehicleColumns);
+    if (!row) throw new Error(`Vehicle ${tesla.id} vanished while locked`);
+    return toDriverVehicle(row);
+  });
 }
 
-// Set by hand on the map; there is no live GPS (FR-D4).
-export async function setLocation(
+// Not while a passenger is in the Tesla (FR-D3). Going offline twice is harmless.
+export function goOffline(db: Database, driverId: string): Promise<DriverVehicle> {
+  return updateIdleVehicle(
+    db,
+    driverId,
+    { isOnline: false },
+    'Finish or cancel your current ride before going offline.',
+  );
+}
+
+// Set by hand on the map; there is no live GPS (FR-D4). Not during a ride.
+export function setLocation(
   db: Database,
   driverId: string,
   location: LatLng,
 ): Promise<DriverVehicle> {
-  const [row] = await db
-    .update(vehicles)
-    .set({ currentLat: location.lat, currentLng: location.lng, updatedAt: sql`now()` })
-    .where(byDriver(driverId))
-    .returning(vehicleColumns);
-  if (!row) throw noVehicle();
-  return toDriverVehicle(row);
+  return updateIdleVehicle(
+    db,
+    driverId,
+    { currentLat: location.lat, currentLng: location.lng },
+    'Finish or cancel your current ride before moving your Tesla.',
+  );
 }
