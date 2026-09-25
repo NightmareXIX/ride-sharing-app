@@ -270,6 +270,13 @@ function DriverDashboard({ account }: { account: Account }) {
       tone: 'destination',
     });
   }
+  // The stops still to come, in order, from where the route goes on.
+  const stops = trip?.stops ?? [];
+  const lastReached = stops.filter((stop) => stop.actualOdometerKm !== null).at(-1);
+  const routeStart = lastReached?.place ?? vehicle.location;
+  const ahead = stops.filter((stop) => stop.actualOdometerKm === null).map((stop) => stop.place);
+  const routePath = routeStart && ahead.length > 0 ? [routeStart, ...ahead] : undefined;
+
   if (searching) {
     for (const request of requests ?? []) {
       markers.push({
@@ -302,6 +309,7 @@ function DriverDashboard({ account }: { account: Account }) {
       {searching && (
         <NearbyRequests
           requests={requests}
+          onTrip={onTrip}
           freeSeats={seatsFree}
           accepting={accepting}
           onAccept={accept}
@@ -369,11 +377,13 @@ function DriverDashboard({ account }: { account: Account }) {
             onTrip ? 'Map of your current ride.' : 'Map of Dhaka. Tap to choose your location.'
           }
           markers={markers}
+          path={routePath}
           onPick={busy === null && !onTrip ? setDraft : undefined}
         />
         {onTrip ? (
           <p className="mt-3 text-sm text-slate-500">
-            Your location stays put while you have a passenger.
+            Your location stays put while you have a passenger. The dashed line shows the order of
+            your stops, not the road.
           </p>
         ) : (
           <>

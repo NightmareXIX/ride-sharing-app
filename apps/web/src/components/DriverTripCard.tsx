@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { PAYMENT_METHOD_LABELS, RIDE_OPTION_LABELS, type PaymentMethod } from '@/lib/booking';
 import type { FareBreakdown as Fare } from '@/lib/fare';
 import { formatTaka } from '@/lib/money';
-import type { DriverTrip, NextAction, TripBooking } from '@/lib/trip';
+import type { DriverTrip, NextAction, TripBooking, TripStop } from '@/lib/trip';
 import { primaryButton, secondaryButton } from './buttons';
 import { ConfirmAction } from './ConfirmAction';
 import { FareBreakdown } from './FareBreakdown';
@@ -36,6 +36,58 @@ const STEP_LABELS: Record<NextAction, { idle: string; pending: string }> = {
   start: { idle: 'Passenger is in, start trip', pending: 'Starting…' },
   complete: { idle: 'Dropped off, complete trip', pending: 'Completing…' },
 };
+
+// The stops in the order the driver takes them, with the km along the trip at each: the
+// reading once reached, else the plan (FR-L5). Only the next stop can be acted on.
+function RouteStops({ stops }: { stops: TripStop[] }) {
+  return (
+    <div>
+      <h3 className="text-sm font-medium text-slate-500">Route</h3>
+      <ol className="mt-2 space-y-1">
+        {stops.map((stop) => {
+          const reached = stop.actualOdometerKm !== null;
+          return (
+            <li
+              key={stop.id}
+              aria-current={stop.isNext ? 'step' : undefined}
+              className={`flex items-baseline justify-between gap-3 rounded-lg px-3 py-2 text-sm ${
+                stop.isNext ? 'bg-emerald-50 ring-1 ring-emerald-200' : ''
+              }`}
+            >
+              <span className="flex min-w-0 items-baseline gap-2.5">
+                <span
+                  aria-hidden
+                  className={`size-2.5 shrink-0 rounded-full ${
+                    stop.type === 'pickup' ? 'bg-emerald-600' : 'bg-red-600'
+                  } ${reached ? 'opacity-40' : ''}`}
+                />
+                <span className={reached ? 'text-slate-500' : 'text-slate-900'}>
+                  {stop.type === 'pickup' ? 'Pick up' : 'Drop off'} {stop.passenger.name} at{' '}
+                  {stop.place.label}
+                </span>
+              </span>
+              <span className="shrink-0 text-right tabular-nums text-slate-500">
+                {stop.isNext && <span className="mr-2 font-medium text-emerald-700">Next</span>}
+                {reached ? (
+                  <>
+                    <span aria-hidden>✓ </span>
+                    <span className="sr-only">Reached at </span>
+                    {stop.actualOdometerKm} km
+                  </>
+                ) : (
+                  <>
+                    <span className="sr-only">Planned at </span>
+                    {stop.plannedOdometerKm} km
+                  </>
+                )}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
 
 // One passenger in the Tesla: who they are, where they're going and how they pay (FR-D14).
 function Passenger({
@@ -84,14 +136,23 @@ function Passenger({
         </Detail>
       </dl>
       <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-start">
-        <button
-          type="button"
-          onClick={() => onStep(booking)}
-          disabled={busy}
-          className={primaryButton}
-        >
-          {pending ? step.pending : step.idle}
-        </button>
+        {/* The stops go in order: a step is offered only at the next stop. */}
+        {booking.canAct ? (
+          <button
+            type="button"
+            onClick={() => onStep(booking)}
+            disabled={busy}
+            className={primaryButton}
+          >
+            {pending ? step.pending : step.idle}
+          </button>
+        ) : (
+          <p className="py-2 text-sm text-slate-500">
+            {booking.status === 'STARTED'
+              ? 'Aboard. Drop-off comes after the stops before it.'
+              : 'Pickup comes after the stops before it.'}
+          </p>
+        )}
         {/* Only before pickup; the request goes back to other drivers (FR-D12). */}
         {booking.status !== 'STARTED' && (
           <ConfirmAction
@@ -134,6 +195,9 @@ export function DriverTripCard({
         <p className="text-sm text-slate-500 tabular-nums">
           {trip.bookings.length} {trip.bookings.length === 1 ? 'passenger' : 'passengers'}
         </p>
+      </div>
+      <div className="mb-4 border-b border-slate-100 pb-4">
+        <RouteStops stops={trip.stops} />
       </div>
       <div className="divide-y divide-slate-100">
         {trip.bookings.map((booking) => (

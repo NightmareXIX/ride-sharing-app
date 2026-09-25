@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import {
   CircleMarker,
   MapContainer,
+  Polyline,
   TileLayer,
   Tooltip,
   useMap,
@@ -24,6 +25,9 @@ export interface MapMarker {
 
 export interface MapPickerProps {
   markers: MapMarker[];
+  // Points joined by a dashed line, e.g. the stops still to come, in order. The line shows
+  // the order only; it isn't the road.
+  path?: LatLng[];
   // Called with a point inside Dhaka when the map is tapped. Leave out for a read-only map.
   onPick?: (point: LatLng) => void;
   label: string;
@@ -70,7 +74,7 @@ function FollowMarkers({ markers }: { markers: MapMarker[] }) {
 }
 
 // An OpenStreetMap map of Dhaka with the required credit (NFR-24).
-export default function MapPickerClient({ markers, onPick, label }: MapPickerProps) {
+export default function MapPickerClient({ markers, path, onPick, label }: MapPickerProps) {
   const first = markers[0]?.point ?? DHAKA_CENTER;
   return (
     <div
@@ -91,6 +95,12 @@ export default function MapPickerClient({ markers, onPick, label }: MapPickerPro
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
+        {path && path.length > 1 && (
+          <Polyline
+            positions={path}
+            pathOptions={{ color: '#0f172a', weight: 3, opacity: 0.6, dashArray: '6 8' }}
+          />
+        )}
         {markers.map((marker) => (
           <CircleMarker
             key={marker.key}
