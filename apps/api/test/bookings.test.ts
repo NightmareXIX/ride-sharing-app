@@ -150,11 +150,13 @@ describe('requesting a ride (FR-P3)', () => {
       completedAt: null,
       cancelledAt: null,
       freeCancelUntil: null,
+      cancelFine: null,
       // No driver has it yet.
       driver: null,
       vehicle: null,
       notice: null,
       fare: null,
+      fine: null,
     });
     expect(await historyOf(booking.id)).toEqual([
       { from_status: null, to_status: 'REQUESTED', reason: 'requested' },
