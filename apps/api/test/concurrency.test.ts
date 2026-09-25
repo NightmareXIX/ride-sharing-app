@@ -267,3 +267,63 @@ describe('one driver per request (FR-R4, FR-C2)', () => {
     RACE_TIMEOUT_MS,
   );
 });
+
+describe('one active booking per passenger (FR-P10, FR-C6)', () => {
+  async function activeBookings(): Promise<number> {
+    const { rows } = await pool.query(
+      "SELECT 1 FROM bookings WHERE status NOT IN ('COMPLETED', 'CANCELLED')",
+    );
+    return rows.length;
+  }
+
+  it(
+    'turns five taps of the same request into one booking (NFR-37)',
+    async () => {
+      for (let round = 0; round < ROUNDS; round += 1) {
+        await resetRides(pool);
+        const responses = await Promise.all(
+          Array.from({ length: 5 }, () => postJson(server, '/api/v1/bookings', tripFrom(), nusrat)),
+        );
+
+        const statuses = responses.map((res) => res.status).sort();
+        expect(statuses).toEqual([200, 200, 200, 200, 201]);
+        const ids = await Promise.all(
+          responses.map(
+            async (res) => ((await res.json()) as { booking: { id: string } }).booking.id,
+          ),
+        );
+        expect(new Set(ids).size).toBe(1);
+        expect(await activeBookings()).toBe(1);
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+
+  it(
+    'refuses every other ride while one is active',
+    async () => {
+      for (let round = 0; round < ROUNDS; round += 1) {
+        await resetRides(pool);
+        // Five different rides, told apart by their destination.
+        const responses = await Promise.all(
+          Array.from({ length: 5 }, (_, i) =>
+            postJson(
+              server,
+              '/api/v1/bookings',
+              tripFrom(BANANI, { destination: { ...MOHAKHALI, label: `Mohakhali gate ${i + 1}` } }),
+              nusrat,
+            ),
+          ),
+        );
+
+        const results = await Promise.all(responses.map(outcome));
+        expect(results.filter((r) => r.status === 201)).toHaveLength(1);
+        for (const r of results.filter((x) => x.status !== 201)) {
+          expect(r).toEqual({ status: 409, code: 'ACTIVE_BOOKING_EXISTS' });
+        }
+        expect(await activeBookings()).toBe(1);
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+});
