@@ -13,7 +13,13 @@ export type ErrorCode =
   | 'ACTIVE_BOOKING_EXISTS'
   | 'NEGATIVE_BALANCE'
   | 'INSUFFICIENT_BALANCE'
-  | 'INVALID_TRANSITION';
+  | 'INVALID_TRANSITION'
+  // Driver flow (phase 3)
+  | 'ALREADY_CLAIMED'
+  | 'SEATS_UNAVAILABLE'
+  | 'HAS_ACTIVE_BOOKINGS'
+  | 'NO_LONGER_MATCHES'
+  | 'DRIVER_OFFLINE';
 
 // Every error response has this shape (NFR-35).
 export interface ErrorBody {

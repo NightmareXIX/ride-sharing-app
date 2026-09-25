@@ -24,6 +24,8 @@ const envSchema = databaseEnvSchema
       .optional()
       .transform((key) => key || undefined),
     ORS_BASE_URL: z.url().default('https://api.openrouteservice.org'),
+    // How far from their Tesla an idle driver sees ride requests (FR-D6, FR §2).
+    DRIVER_SEARCH_RADIUS_KM: z.coerce.number().positive().max(20).default(2),
   })
   .transform((env) => ({
     ...env,

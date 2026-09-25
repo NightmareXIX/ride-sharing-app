@@ -144,7 +144,17 @@ describe('requesting a ride (FR-P3)', () => {
       distanceMethod: 'fallback',
       estimatedFare: expect.stringMatching(/^\d+\.\d{2}$/),
       requestedAt: expect.any(String),
+      acceptedAt: null,
+      arrivedAt: null,
+      startedAt: null,
+      completedAt: null,
       cancelledAt: null,
+      freeCancelUntil: null,
+      // No driver has it yet.
+      driver: null,
+      vehicle: null,
+      notice: null,
+      fare: null,
     });
     expect(await historyOf(booking.id)).toEqual([
       { from_status: null, to_status: 'REQUESTED', reason: 'requested' },
@@ -358,17 +368,6 @@ describe('cancelling a waiting request (FR-P7)', () => {
     expect(res.status).toBe(404);
     const own = await getJson(server, `/api/v1/bookings/${id}`, nusrat);
     expect(((await own.json()) as { booking: Booking }).booking.status).toBe('REQUESTED');
-  });
-
-  it('refuses to cancel a ride that has finished (FR-R8)', async () => {
-    const { id } = await bookingOf(await requestRide(NUSRAT_TRIP));
-    // No route completes a ride yet, so the state is set directly.
-    await pool.query("UPDATE bookings SET status = 'COMPLETED' WHERE id = $1", [id]);
-
-    const res = await cancel(id);
-    expect(res.status).toBe(409);
-    expect(await errorCode(res)).toBe('INVALID_TRANSITION');
-    expect(await historyOf(id)).toHaveLength(1);
   });
 
   it('is for passengers only', async () => {

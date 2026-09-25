@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
 import { AppShell, Card } from '@/components/AppShell';
-import { CurrentRequest } from '@/components/CurrentRequest';
+import { CurrentRequest, FinishedRide } from '@/components/CurrentRequest';
 import { FormAlert } from '@/components/forms';
 import { RequestRideForm } from '@/components/RequestRideForm';
 import type { Account } from '@/lib/account';
@@ -16,6 +16,8 @@ import { usePolling } from '@/lib/usePolling';
 function PassengerHome({ account }: { account: Account }) {
   const router = useRouter();
   const [booking, setBooking] = useState<Booking | null>(account.currentBooking);
+  // The ride that just ended, shown until the passenger moves on.
+  const [finished, setFinished] = useState<Booking | null>(null);
   const [connectionLost, setConnectionLost] = useState(false);
   const [notice, setNotice] = useState('');
   const [alert, setAlert] = useState('');
@@ -27,13 +29,19 @@ function PassengerHome({ account }: { account: Account }) {
     setBooking(next);
   }
 
-  // The request's status, checked every 4 seconds while there is one (FR-P5, NFR-3).
+  // The ride's status, checked every 4 seconds while there is one (FR-P5, NFR-3).
   usePolling(async () => {
     const startedAt = changes.current;
     try {
       const { booking: current } = await api<{ booking: Booking | null }>('/bookings/current');
+      // A ride that ended is no longer current, so it is read by id to show how it ended.
+      const ended =
+        current === null && booking
+          ? (await api<{ booking: Booking }>(`/bookings/${booking.id}`)).booking
+          : null;
       if (changes.current !== startedAt) return;
       setBooking(current);
+      if (ended) setFinished(ended);
       setConnectionLost(false);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) router.replace('/login');
@@ -47,7 +55,11 @@ function PassengerHome({ account }: { account: Account }) {
     try {
       await api<{ booking: Booking }>(`/bookings/${booking.id}/cancel`, { method: 'POST' });
       show(null);
-      setNotice('Your request was cancelled. No charge.');
+      setNotice(
+        booking.status === 'REQUESTED'
+          ? 'Your request was cancelled. No charge.'
+          : 'Your ride was cancelled.',
+      );
     } catch (err) {
       setAlert((err as Error).message);
       // The ride may have moved on; show where it is now.
@@ -58,6 +70,7 @@ function PassengerHome({ account }: { account: Account }) {
 
   function requested(next: Booking) {
     setNotice('');
+    setFinished(null);
     show(next);
   }
 
@@ -71,6 +84,8 @@ function PassengerHome({ account }: { account: Account }) {
       )}
       {booking ? (
         <CurrentRequest booking={booking} onCancel={cancel} connectionLost={connectionLost} />
+      ) : finished ? (
+        <FinishedRide booking={finished} onDone={() => setFinished(null)} />
       ) : (
         <Card label="Where to?">
           <div className="mt-3">

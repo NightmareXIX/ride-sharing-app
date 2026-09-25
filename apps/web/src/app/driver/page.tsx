@@ -1,24 +1,25 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppShell, Card } from '@/components/AppShell';
+import { primaryButton, secondaryButton } from '@/components/buttons';
+import { CompletedRideCard, DriverTripCard, type CompletedRide } from '@/components/DriverTripCard';
 import { FormAlert } from '@/components/forms';
 import { MapPicker, type MapMarker } from '@/components/MapPicker';
+import { NearbyRequests } from '@/components/NearbyRequests';
 import { QuickPicks } from '@/components/QuickPicks';
 import type { Account } from '@/lib/account';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import type { LatLng } from '@/lib/geo';
 import { formatTaka } from '@/lib/money';
 import { describePoint } from '@/lib/places';
+import type { CompletedTrip, DriverTrip, NearbyRequest, TripBooking } from '@/lib/trip';
 import { useAccount } from '@/lib/useAccount';
+import { usePolling } from '@/lib/usePolling';
 import type { DriverVehicle } from '@/lib/vehicle';
 
 type Busy = 'availability' | 'location' | null;
-
-const primaryButton =
-  'rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:cursor-wait disabled:opacity-70';
-const secondaryButton =
-  'rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:cursor-wait disabled:opacity-70';
 
 function StatusPill({ online }: { online: boolean }) {
   return (
@@ -37,19 +38,35 @@ function StatusPill({ online }: { online: boolean }) {
 }
 
 function DriverDashboard({ account }: { account: Account }) {
+  const router = useRouter();
   const [vehicle, setVehicle] = useState<DriverVehicle | null>(null);
+  const [trip, setTrip] = useState<DriverTrip | null>(null);
+  const [requests, setRequests] = useState<NearbyRequest[] | null>(null);
   const [loadError, setLoadError] = useState('');
   const [attempt, setAttempt] = useState(0);
   // A point chosen on the map but not saved yet.
   const [draft, setDraft] = useState<LatLng | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
+  const [accepting, setAccepting] = useState<string | null>(null);
+  // The passenger whose trip action is running.
+  const [stepping, setStepping] = useState<string | null>(null);
+  const [completed, setCompleted] = useState<CompletedRide | null>(null);
+  const [notice, setNotice] = useState('');
   const [alert, setAlert] = useState('');
+  const [connectionLost, setConnectionLost] = useState(false);
+  // Bumped by every trip change made here, so a poll that started before it can't undo it.
+  const tripChanges = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
-    api<{ vehicle: DriverVehicle }>('/driver/vehicle').then(
-      (body) => {
-        if (!cancelled) setVehicle(body.vehicle);
+    Promise.all([
+      api<{ vehicle: DriverVehicle }>('/driver/vehicle'),
+      api<{ pool: DriverTrip | null }>('/driver/pool'),
+    ]).then(
+      ([vehicleBody, tripBody]) => {
+        if (cancelled) return;
+        setVehicle(vehicleBody.vehicle);
+        setTrip(tripBody.pool);
       },
       (err: unknown) => {
         if (!cancelled) setLoadError((err as Error).message);
@@ -65,6 +82,48 @@ function DriverDashboard({ account }: { account: Account }) {
     setAttempt((n) => n + 1);
   }, []);
 
+  function showTrip(next: DriverTrip | null) {
+    tripChanges.current += 1;
+    setTrip(next);
+  }
+
+  const lostTouch = useCallback(
+    (err: unknown) => {
+      if (err instanceof ApiError && err.status === 401) router.replace('/login');
+      else setConnectionLost(true);
+    },
+    [router],
+  );
+
+  // Nearby requests, while online with no passenger (FR-D5, FR-D6, NFR-3).
+  const searching = vehicle?.isOnline === true && trip === null;
+  const refreshRequests = useCallback(async () => {
+    try {
+      const body = await api<{ requests: NearbyRequest[] }>('/driver/requests');
+      setRequests(body.requests);
+      setConnectionLost(false);
+    } catch (err) {
+      lostTouch(err);
+    }
+  }, [lostTouch]);
+
+  // The first check runs straight away; the rest every 4 seconds.
+  usePolling(refreshRequests, searching, { immediate: true });
+
+  // The trip in progress: a passenger may cancel at any moment (FR-P7).
+  usePolling(async () => {
+    const startedAt = tripChanges.current;
+    try {
+      const body = await api<{ pool: DriverTrip | null }>('/driver/pool');
+      if (tripChanges.current !== startedAt) return;
+      if (!body.pool) setNotice('Your passenger cancelled the ride.');
+      setTrip(body.pool);
+      setConnectionLost(false);
+    } catch (err) {
+      lostTouch(err);
+    }
+  }, trip !== null);
+
   // One action at a time; its buttons stay disabled until it finishes (NFR-37).
   async function run(kind: Exclude<Busy, null>, call: () => Promise<{ vehicle: DriverVehicle }>) {
     setBusy(kind);
@@ -73,6 +132,7 @@ function DriverDashboard({ account }: { account: Account }) {
       const body = await call();
       setVehicle(body.vehicle);
       if (kind === 'location') setDraft(null);
+      if (!body.vehicle.isOnline) setRequests(null);
     } catch (err) {
       setAlert((err as Error).message);
     } finally {
@@ -93,6 +153,69 @@ function DriverDashboard({ account }: { account: Account }) {
       }),
     );
 
+  // Everything is checked again on the server; the list may be a few seconds old.
+  async function accept(request: NearbyRequest) {
+    setAccepting(request.id);
+    setAlert('');
+    setNotice('');
+    setCompleted(null);
+    try {
+      const body = await api<{ pool: DriverTrip | null }>(`/driver/requests/${request.id}/accept`, {
+        method: 'POST',
+      });
+      showTrip(body.pool);
+      setRequests(null);
+    } catch (err) {
+      setAlert((err as Error).message);
+      void refreshRequests();
+    } finally {
+      setAccepting(null);
+    }
+  }
+
+  // Moves one passenger a step: arrived, started, then dropped off (FR-D10).
+  async function step(booking: TripBooking) {
+    const action = booking.nextAction;
+    setStepping(booking.id);
+    setAlert('');
+    try {
+      const path = `/driver/bookings/${booking.id}/${action}`;
+      if (action === 'complete') {
+        const body = await api<CompletedTrip>(path, { method: 'POST' });
+        setCompleted({
+          passengerName: booking.passenger.name,
+          paymentMethod: booking.paymentMethod,
+          fare: body.fare,
+        });
+        showTrip(body.pool);
+      } else {
+        const body = await api<{ pool: DriverTrip | null }>(path, { method: 'POST' });
+        showTrip(body.pool);
+      }
+    } catch (err) {
+      setAlert((err as Error).message);
+    } finally {
+      setStepping(null);
+    }
+  }
+
+  // Before pickup only; the request goes back to other drivers (FR-D12).
+  async function cancelRide(booking: TripBooking) {
+    setStepping(booking.id);
+    setAlert('');
+    try {
+      const body = await api<{ pool: DriverTrip | null }>(`/driver/bookings/${booking.id}/cancel`, {
+        method: 'POST',
+      });
+      showTrip(body.pool);
+      setNotice(`You cancelled ${booking.passenger.name}'s ride. It's back with other drivers.`);
+    } catch (err) {
+      setAlert((err as Error).message);
+    } finally {
+      setStepping(null);
+    }
+  }
+
   if (loadError) {
     return (
       <div role="alert" className="rounded-xl bg-white p-6 ring-1 ring-slate-200">
@@ -111,15 +234,63 @@ function DriverDashboard({ account }: { account: Account }) {
     );
   }
 
+  // A driver with a passenger stays online and in place (FR-D3).
+  const onTrip = trip !== null;
+
   const markers: MapMarker[] = [];
   if (vehicle.location) {
     markers.push({ key: 'tesla', point: vehicle.location, label: vehicle.name, tone: 'driver' });
   }
   if (draft) markers.push({ key: 'draft', point: draft, label: 'New location', tone: 'draft' });
+  for (const booking of trip?.bookings ?? []) {
+    markers.push({
+      key: `pickup-${booking.id}`,
+      point: booking.pickup,
+      label: `Pickup: ${booking.passenger.name}`,
+      tone: 'pickup',
+    });
+    markers.push({
+      key: `destination-${booking.id}`,
+      point: booking.destination,
+      label: booking.destination.label,
+      tone: 'destination',
+    });
+  }
+  if (searching) {
+    for (const request of requests ?? []) {
+      markers.push({
+        key: `request-${request.id}`,
+        point: request.pickup,
+        label: request.pickup.label,
+        tone: 'pickup',
+      });
+    }
+  }
 
   return (
     <div className="space-y-4">
       <FormAlert>{alert}</FormAlert>
+      {connectionLost && (
+        <p role="status" className="text-sm text-amber-700">
+          Can’t reach the server. Still trying…
+        </p>
+      )}
+
+      {notice && !trip && (
+        <p role="status" className="rounded-lg bg-slate-100 px-3 py-2.5 text-sm text-slate-700">
+          {notice}
+        </p>
+      )}
+      {completed && <CompletedRideCard ride={completed} onDismiss={() => setCompleted(null)} />}
+      {trip && (
+        <DriverTripCard trip={trip} pendingId={stepping} onStep={step} onCancel={cancelRide} />
+      )}
+      {searching && <NearbyRequests requests={requests} accepting={accepting} onAccept={accept} />}
+      {!vehicle.isOnline && (
+        <p className="rounded-xl border border-dashed border-slate-300 p-5 text-slate-600">
+          Go online to receive ride requests.
+        </p>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Card label="Your Tesla">
@@ -135,7 +306,7 @@ function DriverDashboard({ account }: { account: Account }) {
           <button
             type="button"
             onClick={toggleOnline}
-            disabled={busy !== null}
+            disabled={busy !== null || onTrip}
             className={`mt-4 w-full ${vehicle.isOnline ? secondaryButton : primaryButton}`}
           >
             {busy === 'availability'
@@ -146,8 +317,14 @@ function DriverDashboard({ account }: { account: Account }) {
                 ? 'Go offline'
                 : 'Go online'}
           </button>
-          {!vehicle.location && (
-            <p className="mt-2 text-sm text-slate-500">Set your location to go online.</p>
+          {onTrip ? (
+            <p className="mt-2 text-sm text-slate-500">
+              Finish or cancel your current ride before going offline.
+            </p>
+          ) : (
+            !vehicle.location && (
+              <p className="mt-2 text-sm text-slate-500">Set your location to go online.</p>
+            )
           )}
         </Card>
         <Card label="TeslaPay balance">
@@ -162,17 +339,27 @@ function DriverDashboard({ account }: { account: Account }) {
           {vehicle.location ? describePoint(vehicle.location) : 'Not set yet'}
         </p>
         <MapPicker
-          label="Map of Dhaka. Tap to choose your location."
+          label={
+            onTrip ? 'Map of your current ride.' : 'Map of Dhaka. Tap to choose your location.'
+          }
           markers={markers}
-          onPick={busy === null ? setDraft : undefined}
+          onPick={busy === null && !onTrip ? setDraft : undefined}
         />
-        <p className="mt-3 text-sm text-slate-500">
-          Tap the map or choose a spot below, then save it.
-        </p>
-        <div className="mt-3">
-          <QuickPicks onPick={setDraft} disabled={busy !== null} />
-        </div>
-        {draft && (
+        {onTrip ? (
+          <p className="mt-3 text-sm text-slate-500">
+            Your location stays put while you have a passenger.
+          </p>
+        ) : (
+          <>
+            <p className="mt-3 text-sm text-slate-500">
+              Tap the map or choose a spot below, then save it.
+            </p>
+            <div className="mt-3">
+              <QuickPicks onPick={setDraft} disabled={busy !== null} />
+            </div>
+          </>
+        )}
+        {draft && !onTrip && (
           <div className="mt-4 flex flex-col gap-2 rounded-lg bg-blue-50 p-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-blue-900">
               New location: <span className="font-medium">{describePoint(draft)}</span>
@@ -198,12 +385,6 @@ function DriverDashboard({ account }: { account: Account }) {
           </div>
         )}
       </Card>
-
-      <p className="rounded-xl border border-dashed border-slate-300 p-5 text-slate-600">
-        {vehicle.isOnline
-          ? 'You’re online. Ride requests will show up here soon.'
-          : 'Go online to receive ride requests.'}
-      </p>
     </div>
   );
 }

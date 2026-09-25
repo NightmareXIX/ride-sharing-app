@@ -15,6 +15,7 @@ import { BOOKING_STATUSES, FINAL_STATUSES, PAYMENT_METHODS } from '../../domain/
 import { RIDE_OPTIONS } from '../../domain/fare.js';
 import { coordinate } from './columns.js';
 import { distanceMethod } from './distanceCache.js';
+import { pools } from './pools.js';
 import { users } from './users.js';
 import { MAX_VEHICLE_CAPACITY } from './vehicles.js';
 
@@ -50,8 +51,39 @@ export const bookings = pgTable(
     // The database clock decides every time window (NFR-38).
     requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    // The trip the booking belongs to now (FR-R6). Empty while it waits for a driver; a
+    // driver cancel empties it again, and the history keeps the pool it left.
+    poolId: uuid('pool_id').references(() => pools.id),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    arrivedAt: timestamp('arrived_at', { withTimezone: true }),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
   },
   (t) => [
+    index('bookings_pool_id_idx').on(t.poolId),
+    // Drivers read the open requests, oldest first, every 4 seconds (NFR-3).
+    index('bookings_open_requests_idx')
+      .on(t.requestedAt)
+      .where(sql`${t.status} = 'REQUESTED'`),
+    // The lifecycle columns always agree with the status.
+    check('bookings_pool_accepted', sql`(${t.poolId} IS NULL) = (${t.acceptedAt} IS NULL)`),
+    check('bookings_requested_unassigned', sql`${t.status} <> 'REQUESTED' OR ${t.poolId} IS NULL`),
+    check(
+      'bookings_assigned_has_pool',
+      sql`${t.status} NOT IN ('ACCEPTED', 'DRIVER_ARRIVED', 'STARTED', 'COMPLETED') OR ${t.poolId} IS NOT NULL`,
+    ),
+    check(
+      'bookings_arrived_at',
+      sql`(${t.status} NOT IN ('DRIVER_ARRIVED', 'STARTED', 'COMPLETED') OR ${t.arrivedAt} IS NOT NULL) AND (${t.arrivedAt} IS NULL OR ${t.acceptedAt} IS NOT NULL)`,
+    ),
+    check(
+      'bookings_started_at',
+      sql`(${t.startedAt} IS NOT NULL) = (${t.status} IN ('STARTED', 'COMPLETED'))`,
+    ),
+    check(
+      'bookings_completed_at',
+      sql`(${t.completedAt} IS NOT NULL) = (${t.status} = 'COMPLETED')`,
+    ),
     check(
       'bookings_seats_range',
       sql`${t.seats} BETWEEN 1 AND ${sql.raw(String(MAX_VEHICLE_CAPACITY))}`,
@@ -85,6 +117,8 @@ export const bookingStatusHistory = pgTable(
       .notNull()
       .references(() => users.id),
     reason: text('reason').notNull(),
+    // The pool the booking was in when it changed; for a driver cancel, the one it left.
+    poolId: uuid('pool_id').references(() => pools.id),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('booking_status_history_booking_id_idx').on(t.bookingId)],

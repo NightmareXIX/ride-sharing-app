@@ -1,3 +1,4 @@
+import type { FareBreakdown } from './fare';
 import type { Place } from './geo';
 
 export type RideOption = 'pool' | 'same_gender' | 'solo';
@@ -28,7 +29,8 @@ export interface FareQuote {
   estimatedFare: string;
 }
 
-// A passenger's own booking, as the API returns it.
+// A passenger's own booking, as the API returns it. It names their driver and Tesla once
+// accepted, never another passenger.
 export interface Booking {
   id: string;
   status: BookingStatus;
@@ -41,5 +43,17 @@ export interface Booking {
   distanceMethod: DistanceMethod;
   estimatedFare: string;
   requestedAt: string;
+  acceptedAt: string | null;
+  arrivedAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
   cancelledAt: string | null;
+  // Cancelling after acceptance is free until then.
+  freeCancelUntil: string | null;
+  driver: { name: string } | null;
+  vehicle: { name: string } | null;
+  // Set while the ride waits again because its driver cancelled.
+  notice: 'driver_cancelled' | null;
+  // Once the ride is complete.
+  fare: FareBreakdown | null;
 }
