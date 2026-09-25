@@ -66,13 +66,7 @@ export function WalletHistory({
           ))}
         </ul>
       )}
-      <ListFooter
-        shown={entries !== null}
-        hasMore={hasMore}
-        loading={loading}
-        error={error}
-        onLoadMore={onLoadMore}
-      />
+      <ListFooter hasMore={hasMore} loading={loading} error={error} onLoadMore={onLoadMore} />
     </section>
   );
 }

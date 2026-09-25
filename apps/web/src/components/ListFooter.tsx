@@ -1,16 +1,13 @@
 import { secondaryButton } from './buttons';
 
 // The foot of a paged list (NFR-22, NFR-36): what went wrong, and a button that reads the
-// next page, or tries again.
+// next page, or tries again. With nothing shown yet, trying again reads the first page.
 export function ListFooter({
-  shown,
   hasMore,
   loading,
   error,
   onLoadMore,
 }: {
-  // Whether any rows are on screen yet.
-  shown: boolean;
   hasMore: boolean;
   loading: boolean;
   error: string;
@@ -23,7 +20,7 @@ export function ListFooter({
           {error}
         </p>
       )}
-      {(hasMore || (error && shown)) && (
+      {(hasMore || error) && (
         <button
           type="button"
           onClick={onLoadMore}
