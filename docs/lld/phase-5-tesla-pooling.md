@@ -224,8 +224,9 @@ It tries every place for the new pickup and drop-off among the pending stops, wi
 
 | FR-L3 | Check |
 |---|---|
-| (a) pickup ahead on the route | The pickup goes before an existing pending stop. A pickup after the route's end would branch off it. |
-| (b), (c) destination on the route, small detours only | For every passenger whose ride gets longer, and for the newcomer: `detour = projected ride km − direct km ≤ 1 km`. The newcomer's limit is what stops the route from branching at its end: it may only extend towards the new drop-off. |
+| (a) pickup ahead on the route | The pickup goes on a leg of the remaining route, before an existing pending stop, and visiting it adds at most 1 km to that leg. A pickup after the route's end would branch off it. |
+| (b) destination on the route after the pickup | A drop-off placed before an existing stop sits on the leg into that stop, adding at most 1 km to it, as the pickup must. A drop-off after the route's end extends the route instead; the newcomer's detour limit in (c) is what stops that end from branching. Without this check, a trip could "fit" a passenger by driving them somewhere and back before the next pickup: nobody's ride grows, but the route branches. |
+| (c) small detours only | For every passenger whose ride gets longer, and for the newcomer: `detour = projected ride km − direct km ≤ 1 km`. |
 | (d) nobody's fare above their estimate | For the same passengers: `detour ≤ 0.4 × projected shared km`. This is `computed ≤ estimate` with the seat and option multipliers cancelled out (FR-L3(d)). |
 | (e) enough seats | The seat claim, unchanged from phase 4 |
 | (f) solo, same-gender | Phase 7 |
