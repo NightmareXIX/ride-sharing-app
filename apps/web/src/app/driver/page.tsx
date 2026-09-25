@@ -355,6 +355,7 @@ function DriverDashboard({
         <NearbyRequests
           requests={requests}
           onTrip={onTrip}
+          joinRule={trip?.joinRule ?? 'anyone'}
           freeSeats={seatsFree}
           accepting={accepting}
           onAccept={accept}

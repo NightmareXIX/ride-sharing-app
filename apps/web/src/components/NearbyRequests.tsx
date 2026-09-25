@@ -3,15 +3,16 @@
 import { PAYMENT_METHOD_LABELS, RIDE_OPTION_LABELS } from '@/lib/booking';
 import { formatTaka } from '@/lib/money';
 import { formatDhakaTime } from '@/lib/time';
-import type { NearbyRequest } from '@/lib/trip';
+import type { JoinRule, NearbyRequest } from '@/lib/trip';
 import { primaryButton } from './buttons';
 
 // Open requests the driver can take, oldest first: near an idle Tesla, or on the route of
 // one with passengers (FR-L3). The driver picks one; nothing is assigned automatically
-// (FR-D8).
+// (FR-D8). On a solo ride there are none, and a same-gender trip takes one gender (FR-R10).
 export function NearbyRequests({
   requests,
   onTrip,
+  joinRule,
   freeSeats,
   accepting,
   onAccept,
@@ -19,6 +20,8 @@ export function NearbyRequests({
   requests: NearbyRequest[] | null;
   // The Tesla has passengers, so requests must fit its route.
   onTrip: boolean;
+  // Who the trip's ride options let join; `anyone` for an idle Tesla.
+  joinRule: JoinRule;
   // Only requests that fit these are listed (FR-D7).
   freeSeats: number;
   // The request being accepted; every Accept button waits for it (NFR-37).
@@ -38,7 +41,14 @@ export function NearbyRequests({
           {freeSeats} {freeSeats === 1 ? 'seat' : 'seats'} free
         </p>
       </div>
-      {requests === null ? (
+      {(joinRule === 'women' || joinRule === 'men') && (
+        <p className="mt-2 text-sm text-slate-600">Same-gender trip: only {joinRule} can join.</p>
+      )}
+      {joinRule === 'no_one' ? (
+        <p className="mt-2 text-slate-600">
+          You’re on a solo ride. New requests appear after the drop-off.
+        </p>
+      ) : requests === null ? (
         <p role="status" className="mt-2 text-slate-500">
           Looking for requests…
         </p>
