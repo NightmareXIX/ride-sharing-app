@@ -1,3 +1,4 @@
+import type { Gender } from './account';
 import type { FareBreakdown } from './fare';
 import type { Place } from './geo';
 
@@ -12,6 +13,12 @@ export const RIDE_OPTION_LABELS: Record<RideOption, string> = {
   same_gender: 'Same-gender pool',
   solo: 'Solo',
 };
+
+// Who a Same-gender ride shares with, in the passenger's words. The driver's gender
+// doesn't count.
+export function genderGroup(gender: Gender): 'women' | 'men' {
+  return gender === 'female' ? 'women' : 'men';
+}
 
 export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   cash: 'Cash',

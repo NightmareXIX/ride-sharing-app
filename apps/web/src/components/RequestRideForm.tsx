@@ -5,8 +5,10 @@ import { useState, type ReactNode } from 'react';
 import { ChoiceGroup, FieldError, FormAlert } from '@/components/forms';
 import { MapPicker, type MapMarker } from '@/components/MapPicker';
 import { QuickPicks } from '@/components/QuickPicks';
+import type { Gender } from '@/lib/account';
 import { api, ApiError, fieldErrors } from '@/lib/api';
 import {
+  genderGroup,
   PAYMENT_METHOD_LABELS,
   RIDE_OPTION_LABELS,
   type Booking,
@@ -31,11 +33,17 @@ const primaryButton =
 const WALLET_PATH = '/passenger/wallet';
 const walletLink = 'font-medium underline underline-offset-2';
 
-const OPTION_CHOICES: ReadonlyArray<{ value: RideOption; label: ReactNode }> = [
-  { value: 'pool', label: <ChoiceLabel title="Pool" detail="Share the ride" /> },
-  { value: 'same_gender', label: <ChoiceLabel title="Same-gender" detail="+5%" /> },
-  { value: 'solo', label: <ChoiceLabel title="Solo" detail="+15%" /> },
-];
+// What each option does, with its surcharge (FR-F2, FR-R10).
+function optionChoices(gender: Gender): ReadonlyArray<{ value: RideOption; label: ReactNode }> {
+  return [
+    { value: 'pool', label: <ChoiceLabel title="Pool" detail="Share the ride" /> },
+    {
+      value: 'same_gender',
+      label: <ChoiceLabel title="Same-gender" detail={`Only ${genderGroup(gender)}, +5%`} />,
+    },
+    { value: 'solo', label: <ChoiceLabel title="Solo" detail="Just you, +15%" /> },
+  ];
+}
 
 function ChoiceLabel({ title, detail }: { title: string; detail: string }) {
   return (
@@ -162,9 +170,12 @@ function QuoteCard({
 // Choose a trip, see its price, and request the ride (FR-P3, FR-P4).
 export function RequestRideForm({
   balance,
+  gender,
   onRequested,
 }: {
   balance: string;
+  // The passenger's, for what a Same-gender ride shares with.
+  gender: Gender;
   onRequested: (booking: Booking) => void;
 }) {
   const [pickup, setPickup] = useState<Place | null>(null);
@@ -344,7 +355,7 @@ export function RequestRideForm({
           changed();
           setRideOption(next);
         }}
-        options={OPTION_CHOICES}
+        options={optionChoices(gender)}
       />
       <ChoiceGroup
         name="paymentMethod"

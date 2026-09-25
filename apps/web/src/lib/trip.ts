@@ -62,11 +62,16 @@ export interface TripStop {
   isNext: boolean;
 }
 
+// Who the ride options still let into the Tesla: no one on a solo ride, one gender on a
+// same-gender trip.
+export type JoinRule = 'anyone' | 'no_one' | 'women' | 'men';
+
 // The body of GET /driver/pool and every trip action, with the Tesla's seats as they stand.
 export interface DriverTrip {
   id: string;
   createdAt: string;
   seats: { capacity: number; taken: number };
+  joinRule: JoinRule;
   // Km along the trip where the route goes on from.
   odometerKm: string;
   stops: TripStop[];

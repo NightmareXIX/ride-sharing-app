@@ -1,8 +1,10 @@
 'use client';
 
 import type { ReactNode } from 'react';
+import type { Gender } from '@/lib/account';
 import {
   FINE_AMOUNT,
+  genderGroup,
   PAYMENT_METHOD_LABELS,
   RIDE_OPTION_LABELS,
   type Booking,
@@ -83,13 +85,31 @@ function fineLine(fine: NonNullable<Booking['fine']>): string {
     : `Late-cancel fine: ${formatTaka(fine.amount)} was taken from your TeslaPay balance.`;
 }
 
+// What the ride option means for this ride (FR-R10). Nothing about anyone else in the
+// Tesla (FR-P8).
+function optionNote(booking: Booking, gender: Gender): string | null {
+  switch (booking.rideOption) {
+    case 'solo':
+      return booking.status === 'REQUESTED'
+        ? 'Solo: waiting for a driver with an empty Tesla.'
+        : 'Solo: the Tesla is yours alone.';
+    case 'same_gender':
+      return `Same-gender: you’ll share only with ${genderGroup(gender)}.`;
+    case 'pool':
+      return null;
+  }
+}
+
 // The passenger's ride in progress. It shows only their own booking (FR-P8).
 export function CurrentRequest({
   booking,
+  gender,
   onCancel,
   connectionLost,
 }: {
   booking: Booking;
+  // The passenger's, for what a Same-gender ride shares with.
+  gender: Gender;
   onCancel: () => Promise<void>;
   connectionLost: boolean;
 }) {
@@ -97,6 +117,7 @@ export function CurrentRequest({
   // A passenger can cancel until the trip starts (FR-P7).
   const cancellable =
     waiting || booking.status === 'ACCEPTED' || booking.status === 'DRIVER_ARRIVED';
+  const note = optionNote(booking, gender);
   return (
     <section
       aria-labelledby="current-request-heading"
@@ -133,6 +154,7 @@ export function CurrentRequest({
         {booking.distanceMethod === 'fallback' && ' (approximate)'}. You never pay more than the
         estimate.
       </p>
+      {note && <p className="mt-1 text-sm text-slate-500">{note}</p>}
       <p className="mt-1 text-sm text-slate-500">
         {booking.acceptedAt
           ? `Accepted ${formatDhakaTime(booking.acceptedAt)}`

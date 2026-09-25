@@ -105,6 +105,22 @@ export async function expectSeatsMatchBookings(pool: pg.Pool): Promise<void> {
   for (const row of rows) expect(row.occupied_seats, row.name).toBe(row.held);
 }
 
+// No trip breaks its ride options (phase 7 LLD §4): a Solo booking is alone among the
+// bookings with the driver, and a trip with a Same-gender booking holds one gender.
+export async function expectRideOptionsHeld(pool: pg.Pool): Promise<void> {
+  const { rows } = await pool.query(
+    `SELECT p.id FROM pools p
+     JOIN bookings b ON b.pool_id = p.id
+       AND b.status IN ('ACCEPTED', 'DRIVER_ARRIVED', 'STARTED')
+     JOIN users u ON u.id = b.passenger_id
+     WHERE p.status = 'active'
+     GROUP BY p.id
+     HAVING (bool_or(b.ride_option = 'solo') AND count(*) > 1)
+         OR (bool_or(b.ride_option = 'same_gender') AND count(DISTINCT u.gender) > 1)`,
+  );
+  expect(rows, 'trips that break their ride options').toEqual([]);
+}
+
 // Clears every ride but keeps the accounts, so a race can run many rounds without new
 // sign-ups. TRUNCATE doesn't fire the append-only row triggers. The cascade empties the
 // wallet ledger too, so every balance goes back to zero with it.

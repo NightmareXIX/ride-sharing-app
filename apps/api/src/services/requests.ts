@@ -1,6 +1,6 @@
 import { and, asc, between, eq, lte } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
-import { bookings } from '../db/schema/index.js';
+import { bookings, users } from '../db/schema/index.js';
 import type { PaymentMethod } from '../domain/booking.js';
 import {
   boundingBox,
@@ -10,12 +10,13 @@ import {
 } from '../domain/dispatch.js';
 import type { RideOption } from '../domain/fare.js';
 import { bestInsertion } from '../domain/matching.js';
+import { canJoin, joinRule, type Rider } from '../domain/rideOptions.js';
 import { freeSeats } from '../domain/seats.js';
 import type { LegLookup } from '../geo/distance.js';
 import type { LatLng } from '../geo/serviceArea.js';
 import type { Logger } from '../logger.js';
 import type { Place } from './bookings.js';
-import { activePoolId, type TripDeps } from './pools.js';
+import { activePoolId, tripRiders, type TripDeps } from './pools.js';
 import { matchingRoute, readTripRoute } from './routes.js';
 import { getDriverVehicle } from './vehicles.js';
 
@@ -57,6 +58,8 @@ const requestColumns = {
   directKm: bookings.directKm,
   estimatedFare: bookings.estimatedFare,
   requestedAt: bookings.requestedAt,
+  // For the ride-option rule only; never sent to the driver (NFR-9).
+  gender: users.gender,
 };
 
 type RequestRow = Awaited<ReturnType<typeof openRequests>>[number];
@@ -66,6 +69,7 @@ function openRequests(db: Database, seatsLeft: number, near?: ReturnType<typeof 
   return db
     .select(requestColumns)
     .from(bookings)
+    .innerJoin(users, eq(users.id, bookings.passengerId))
     .where(
       and(
         eq(bookings.status, 'REQUESTED'),
@@ -86,7 +90,16 @@ function destinationOf(row: RequestRow): LatLng {
 }
 
 function toNearbyRequest(row: RequestRow, from: LatLng, addedKm: string | null): NearbyRequest {
-  const { pickupLat, pickupLng, pickupLabel, destLat, destLng, destLabel, ...rest } = row;
+  const {
+    pickupLat,
+    pickupLng,
+    pickupLabel,
+    destLat,
+    destLng,
+    destLabel,
+    gender: _gender,
+    ...rest
+  } = row;
   return {
     ...rest,
     pickup: { lat: pickupLat, lng: pickupLng, label: pickupLabel },
@@ -97,8 +110,9 @@ function toNearbyRequest(row: RequestRow, from: LatLng, addedKm: string | null):
 }
 
 // Open requests an online driver may accept, oldest first (FR-D5–D7, FR-D9). An offline
-// driver, or one whose Tesla is full, sees none. An idle Tesla sees requests near it; one
-// with passengers sees those that fit its route (FR-L3).
+// driver, or one whose Tesla is full or on a solo ride, sees none. An idle Tesla sees
+// requests near it, of every option; one with passengers sees those its riders' options
+// let in (FR-R10) and that fit its route (FR-L3).
 export async function listNearbyRequests(
   deps: TripDeps,
   log: Logger,
@@ -113,7 +127,11 @@ export async function listNearbyRequests(
   if (seatsLeft === 0) return [];
 
   const poolId = await activePoolId(db, tesla.id);
-  if (poolId !== null) return requestsOnRoute(deps, log, poolId, here, seatsLeft, dispatch);
+  if (poolId !== null) {
+    const riders = await tripRiders(db, poolId);
+    if (joinRule(riders) === 'no_one') return [];
+    return requestsOnRoute(deps, log, poolId, riders, here, seatsLeft, dispatch);
+  }
 
   // An idle Tesla: a straight-line radius, so the list never waits on the map (NFR-1).
   const rows = await openRequests(db, seatsLeft, boundingBox(here, dispatch.searchRadiusKm));
@@ -123,21 +141,25 @@ export async function listNearbyRequests(
     .map((row) => toNearbyRequest(row, here, null));
 }
 
-// A Tesla with passengers sees the requests that fit its route (NFR §2): first a quick
-// check with no map, a pickup within the search radius of the route; then the matching
-// rule with road distances, calling the map service for at most 3 requests (NFR-3).
+// A Tesla with passengers sees the requests that fit its route (NFR §2): first quick checks
+// with no map, the ride options and a pickup within the search radius of the route; then
+// the matching rule with road distances, calling the map service for at most 3 requests
+// (NFR-3). A request the options rule out never uses up one of those.
 async function requestsOnRoute(
   { db, distance }: TripDeps,
   log: Logger,
   poolId: string,
+  riders: readonly Rider[],
   origin: LatLng,
   seatsLeft: number,
   { searchRadiusKm }: DispatchConfig,
 ): Promise<NearbyRequest[]> {
   const route = matchingRoute(await readTripRoute(db, poolId, origin));
   const onRoute = [route.anchor.point, ...route.pending.map((stop) => stop.point)];
-  const candidates = (await openRequests(db, seatsLeft)).filter((row) =>
-    onRoute.some((point) => isNearby(point, pickupOf(row), searchRadiusKm)),
+  const candidates = (await openRequests(db, seatsLeft)).filter(
+    (row) =>
+      canJoin(riders, row).ok &&
+      onRoute.some((point) => isNearby(point, pickupOf(row), searchRadiusKm)),
   );
   const pointsFor = (row: RequestRow) => [...onRoute, pickupOf(row), destinationOf(row)];
 

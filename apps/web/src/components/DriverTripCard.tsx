@@ -10,7 +10,7 @@ import {
 import type { FareBreakdown as Fare } from '@/lib/fare';
 import { formatTaka } from '@/lib/money';
 import { formatDhakaTime } from '@/lib/time';
-import type { DriverTrip, NextAction, TripBooking, TripStop } from '@/lib/trip';
+import type { DriverTrip, JoinRule, NextAction, TripBooking, TripStop } from '@/lib/trip';
 import { primaryButton, secondaryButton } from './buttons';
 import { ConfirmAction } from './ConfirmAction';
 import { FareBreakdown } from './FareBreakdown';
@@ -207,6 +207,14 @@ function Passenger({
 }
 
 // The driver's trip in progress.
+// The ride options' limit on who joins, when there is one (FR-R10).
+const JOIN_RULE_BADGES: Record<JoinRule, string | null> = {
+  anyone: null,
+  no_one: 'Solo ride',
+  women: 'Women only',
+  men: 'Men only',
+};
+
 export function DriverTripCard({
   trip,
   pendingId,
@@ -230,7 +238,12 @@ export function DriverTripCard({
         <h2 id="current-trip-heading" className="text-sm font-medium text-slate-500">
           In your Tesla
         </h2>
-        <p className="text-sm text-slate-500 tabular-nums">
+        <p className="flex items-center gap-2 text-sm text-slate-500 tabular-nums">
+          {JOIN_RULE_BADGES[trip.joinRule] && (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+              {JOIN_RULE_BADGES[trip.joinRule]}
+            </span>
+          )}
           {trip.bookings.length} {trip.bookings.length === 1 ? 'passenger' : 'passengers'}
         </p>
       </div>

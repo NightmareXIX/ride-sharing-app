@@ -101,13 +101,22 @@ function PassengerHome({
         </p>
       )}
       {booking ? (
-        <CurrentRequest booking={booking} onCancel={cancel} connectionLost={connectionLost} />
+        <CurrentRequest
+          booking={booking}
+          gender={account.user.gender}
+          onCancel={cancel}
+          connectionLost={connectionLost}
+        />
       ) : finished ? (
         <FinishedRide booking={finished} onDone={() => setFinished(null)} />
       ) : (
         <Card label="Where to?">
           <div className="mt-3">
-            <RequestRideForm balance={account.wallet.balance} onRequested={requested} />
+            <RequestRideForm
+              balance={account.wallet.balance}
+              gender={account.user.gender}
+              onRequested={requested}
+            />
           </div>
         </Card>
       )}
