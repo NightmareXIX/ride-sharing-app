@@ -32,7 +32,7 @@ import {
   type PlannedStop,
   type StopType,
 } from '../domain/route.js';
-import { type Rider } from '../domain/rideOptions.js';
+import { canJoin, type OptionConflict, type Rider } from '../domain/rideOptions.js';
 import { fitsFreeSeats } from '../domain/seats.js';
 import { FINE_AMOUNT } from '../domain/wallet.js';
 import type { DistanceMethod, DistanceService } from '../geo/distance.js';
@@ -303,19 +303,33 @@ async function readAccept(db: Database | Transaction, driverId: string, bookingI
       destLat: bookings.destLat,
       destLng: bookings.destLng,
       directKm: bookings.directKm,
+      rideOption: bookings.rideOption,
+      gender: users.gender,
     })
     .from(bookings)
+    .innerJoin(users, eq(users.id, bookings.passengerId))
     .where(eq(bookings.id, bookingId));
-  return { tesla, booking, currentPool: await activePoolId(db, tesla.id) };
+  const currentPool = await activePoolId(db, tesla.id);
+  // Who is in the Tesla now, for the ride-option rule (FR-R10). Any change to them bumps the
+  // Tesla's version, so the commit refuses an accept judged against riders who changed.
+  const riders = currentPool === null ? [] : await tripRiders(db, currentPool);
+  return { tesla, booking, currentPool, riders };
 }
 
 type AcceptRead = Awaited<ReturnType<typeof readAccept>>;
+
+// Why the ride options keep a request out of a Tesla, in the driver's words.
+const OPTION_CONFLICTS: Record<OptionConflict, string> = {
+  TESLA_ON_SOLO_RIDE: 'Your Tesla is on a solo ride.',
+  SOLO_NEEDS_EMPTY_TESLA: 'Solo rides need an empty Tesla.',
+  GENDER_MISMATCH: "This request can't share with the passengers in your Tesla.",
+};
 
 // Whether this Tesla may take this request, judged from rows as they were read. 'repeat'
 // means the driver already has it: a double tap or a retry (FR-C5, NFR-37). Anything that
 // stands in the way is thrown. Whether it fits the route is for the plan to say.
 function judgeAccept(
-  { tesla, booking, currentPool }: AcceptRead,
+  { tesla, booking, currentPool, riders }: AcceptRead,
   { searchRadiusKm }: DispatchConfig,
 ): 'repeat' | 'ok' {
   if (!tesla.isOnline || tesla.lat === null || tesla.lng === null) {
@@ -342,6 +356,9 @@ function judgeAccept(
         : 'Your Tesla has no free seat for this ride any more.',
     );
   }
+  // Solo and same-gender (FR-R10, FR-L3(f)), before any map request.
+  const options = canJoin(riders, booking);
+  if (!options.ok) throw new AppError(422, 'NO_LONGER_MATCHES', OPTION_CONFLICTS[options.reason]);
   // An idle Tesla takes requests near it (FR-D6). One with passengers takes those that fit
   // its route instead, which the plan decides (FR-L3).
   const pickup = { lat: booking.pickupLat, lng: booking.pickupLng };
