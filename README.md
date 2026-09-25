@@ -5,12 +5,13 @@ Share a seat. Split the fare. Survive Dhaka traffic.
 A ride-pooling MVP. Passengers request rides, and a driver accepts them into a shared Tesla.
 The Tesla never carries more people than it has seats, and every passenger pays their own fare.
 
-> **Status:** phases 0 to 3 are done. People can sign up as a passenger or a driver, and
-> sign in and out. A passenger picks a trip on the map, sees the estimated fare and requests
-> the ride. An online driver sees nearby requests and accepts one, then marks arrival,
-> starts the trip and completes it. The final fare is recorded with its full breakdown and
-> paid in cash. Either side can cancel before pickup. One passenger rides at a time; pooling
-> arrives in phase 5. See
+> **Status:** the feature phases, 0 to 8, are done. Passengers request rides on the map and
+> see the estimate first. A driver accepts them into a shared Tesla, which never carries
+> more people than it has seats, and takes each passenger through their stops. Fares follow
+> the pooled formula and are paid in cash or by TeslaPay, with fines for late cancels and
+> no-shows. Solo and same-gender rides decide who may share. Passengers can look back at
+> every ride with its fare breakdown, and drivers at every trip and what they earned. Phase
+> 9 (deployment and release) is next. See
 > [the development plan](docs/Dhaka%20Tesla%20Pool%20—%20Development%20Plan.md).
 
 ## Contents
@@ -30,6 +31,7 @@ The Tesla never carries more people than it has seats, and every passenger pays 
 - [Pooling](#pooling)
 - [Ride options](#ride-options)
 - [TeslaPay and fines](#teslapay-and-fines)
+- [History and earnings](#history-and-earnings)
 - [Concurrency](#concurrency)
 - [Assumptions](#assumptions)
 - [Known limitations](#known-limitations)
@@ -286,6 +288,12 @@ Covered so far:
 - Money races, 25 rounds each: a double-tapped late cancel or complete, a passenger cancel
   against a no-show, ten copies of one top-up, ten different top-ups, and settlements
   beside top-ups. After each round every balance must equal its ledger.
+- Ride history: ended rides newest first, each with its stored breakdown or fine and never
+  the ride in progress; cursor pages with no gaps or repeats; nothing about a co-passenger,
+  and nothing of anyone else's
+- Driver history: the pooled trip with both fares and the cash and TeslaPay split; drops,
+  penalties, cancels and no-shows each shown for what they were; other drivers' trips and
+  the trip in progress 404; earnings equal to the sum of the trips and to the ledger
 
 ## Demo credentials
 
@@ -347,6 +355,12 @@ To see a no-show: accept a ride and tap **Arrived at pickup**. After 5 minutes a
 **No-show** button appears (or move `arrived_at` back the same way). It cancels the ride
 and fines the passenger ৳ 30.00. A driver who cancels more than 3 minutes after accepting
 is warned first, and a penalty is recorded against them.
+
+To see the history: after any of the rides above, open **History**. Nusrat sees each of her
+rides that has ended, newest first; open one for its times and the fare worked out step by
+step, or the fine. Jashim sees his earnings, split into cash and TeslaPay, and every
+finished trip; open one for each passenger, how their part ended and their fare. After the
+pooled ride his earnings read ৳ 123.44: ৳ 52.02 from Nusrat and ৳ 71.42 from Rafiq.
 
 To see the last-seat race: with Jashim online at Banani Road 11, have Rafiq request 2 seats
 to Gulshan 1 and accept it. Bullet shows 2 of 3 seats taken. Then have Nusrat and Shirin
@@ -442,6 +456,19 @@ acceptance is fined. The booking body gains `cancelFine` and `fine`, each trip p
 gains `noShowFrom`, `canNoShow`, `penaltyFrom` and `cancelRecordsPenalty`, and the Tesla
 gains `penaltyCount`. Shapes and rules are in the
 [phase 6 LLD](docs/lld/phase-6-teslapay.md#3-routes).
+
+History and earnings (phase 8), all under `/api/v1`:
+
+| Method | Route               | Who       | Does                                                                                    | Errors |
+| ------ | ------------------- | --------- | --------------------------------------------------------------------------------------- | ------ |
+| GET    | `/bookings`         | passenger | Rides that have ended, newest first, each as `/bookings/:id` returns it; paged          | 400    |
+| GET    | `/driver/pools`     | driver    | Finished trips, newest first, each with its passenger count and earnings; paged         | 400    |
+| GET    | `/driver/pools/:id` | driver    | One finished trip: every passenger, how their part ended, their fare, any penalty       | 404    |
+| GET    | `/driver/earnings`  | driver    | Total earnings over all time, split into `cash` and `teslapay`, and the number of rides | —      |
+
+Lists take `?cursor=…&limit=…` (1–50, default 20). The trip in progress is left out of
+the list and is 404 by id, as is another driver's trip. Shapes and rules are in the
+[phase 8 LLD](docs/lld/phase-8-history.md#3-routes).
 
 Every error has the same shape (NFR-35):
 
@@ -569,6 +596,28 @@ accepting gets a penalty record instead (FR-D13).
 each change once, and a unique index on `(booking_id, type)` backs it up. A top-up carries
 an id made by the form, so a retry after a lost reply adds the money once (NFR-37).
 
+## History and earnings
+
+Everything the history shows was stored as it happened: each booking, its fare breakdown,
+its status history and the driver's penalties. The history only reads them, so a past fare
+is never worked out again (NFR-41), and none of it can be edited (NFR-40).
+
+- **A passenger's history** lists their completed and cancelled rides, newest first (FR-P6).
+  Each ride is the same view the ride screen uses, so it carries the breakdown of FR-P11 or
+  the fine. It never names or prices a co-passenger (FR-P8).
+- **A driver's trips** are the trips of their Tesla that have finished. Each lists every
+  passenger in it: those it completed, those who cancelled or didn't show, and those the
+  driver dropped, with a note when the drop recorded a penalty. A drop empties the booking's
+  trip, so it is found in the status history, which keeps the trip it left.
+- **Earnings** are the final fares of the driver's completed rides, split by how they were
+  paid (FR-D15). They come from the same stored fares as the trips, so the total always
+  equals the sum of the trips. The tests also check it against the ledger's cash earnings
+  and TeslaPay credits.
+
+Long lists come in pages (NFR-36). Bookings and trips carry an insertion number, `seq`, like
+the wallet ledger, and a page reads the rows after the last one sent, so none is skipped or
+repeated when new rows arrive in front.
+
 ## Concurrency
 
 The PRD's problem: Bullet has one seat left, and Nusrat and Shirin both try to claim it at
@@ -649,6 +698,11 @@ rarely taps that fast, and a retry succeeds.
 - **A cancelled pickup's km.** If a passenger cancels while the driver waits at their
   pickup, the route is planned again from the last stop reached. The km driven to that
   pickup aren't charged to anyone still aboard.
+- **History shows what has ended.** Past rides and past trips list only what is finished.
+  The ride or trip in progress stays on the main screen.
+- **Earnings before the ledger.** Rides completed before the wallet ledger existed (phase 6)
+  have a fare but no ledger entry. They still count as earnings, since earnings are summed
+  from the stored fares.
 - **Stop searching.** After a driver cancel, the passenger's request waits again and their
   screen says why. Cancelling a waiting request is free, which serves as the "stop
   searching" option FR §13 left to the design.
