@@ -26,6 +26,8 @@ const RACE_TIMEOUT_MS = 120_000;
 let pool: pg.Pool;
 let server: TestServer;
 let jashim: string;
+let karim: string;
+let tariq: string;
 let nusrat: string;
 let rafiq: string;
 let shirin: string;
@@ -37,6 +39,22 @@ beforeAll(async () => {
   server = await startTestServer(pool);
   await resetDb(pool);
   jashim = await signUpAs(server, driverSignUp());
+  karim = await signUpAs(
+    server,
+    driverSignUp({
+      name: 'Karim',
+      email: 'karim@example.com',
+      vehicle: { name: 'Arrow', capacity: 3 },
+    }),
+  );
+  tariq = await signUpAs(
+    server,
+    driverSignUp({
+      name: 'Tariq',
+      email: 'tariq@example.com',
+      vehicle: { name: 'Comet', capacity: 3 },
+    }),
+  );
   nusrat = await signUpAs(server, passengerSignUp());
   rafiq = await signUpAs(
     server,
@@ -176,6 +194,74 @@ describe('many accepts into one Tesla (FR-R2, FR-C3)', () => {
         for (const res of responses) expect(res.status).toBeLessThan(500);
         await expectSeatsMatchBookings(pool);
         expect(await seatsTaken(pool)).toBeLessThanOrEqual(3);
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+});
+
+describe('one driver per request (FR-R4, FR-C2)', () => {
+  it(
+    'lets exactly one of three drivers claim a request',
+    async () => {
+      await goOnlineAt(server, karim);
+      await goOnlineAt(server, tariq);
+      const drivers = [jashim, karim, tariq];
+      for (let round = 0; round < ROUNDS; round += 1) {
+        await resetRides(pool);
+        const nusrats = await requestRide(server, nusrat);
+
+        const results = await Promise.all(
+          drivers.map(async (driver) => outcome(await acceptRequest(server, driver, nusrats.id))),
+        );
+
+        expect(results.filter((r) => r.status === 200)).toHaveLength(1);
+        expect(results.filter((r) => r.status !== 200)).toEqual([
+          { status: 409, code: 'ALREADY_CLAIMED' },
+          { status: 409, code: 'ALREADY_CLAIMED' },
+        ]);
+
+        // The losers' seat claims and trips were rolled back.
+        const { rows: trips } = await pool.query('SELECT id FROM pools');
+        expect(trips).toHaveLength(1);
+        const { rows: accepted } = await pool.query(
+          "SELECT 1 FROM booking_status_history WHERE booking_id = $1 AND reason = 'accepted'",
+          [nusrats.id],
+        );
+        expect(accepted).toHaveLength(1);
+        const taken = await Promise.all(
+          ['Bullet', 'Arrow', 'Comet'].map((name) => seatsTaken(pool, name)),
+        );
+        expect(taken.reduce((a, b) => a + b, 0)).toBe(1);
+        await expectSeatsMatchBookings(pool);
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+
+  it(
+    'treats a double-tapped accept as one accept (FR-C5, NFR-37)',
+    async () => {
+      for (let round = 0; round < ROUNDS; round += 1) {
+        await resetRides(pool);
+        const nusrats = await requestRide(server, nusrat);
+
+        const [first, second] = await Promise.all([
+          acceptRequest(server, jashim, nusrats.id),
+          acceptRequest(server, jashim, nusrats.id),
+        ]);
+        expect(first?.status).toBe(200);
+        expect(second?.status).toBe(200);
+        const ids = await Promise.all(
+          [first, second].map(
+            async (res) => ((await res?.json()) as { pool: { id: string } }).pool.id,
+          ),
+        );
+        expect(ids[0]).toBe(ids[1]);
+
+        expect(await historyCount(nusrats.id)).toBe(2);
+        expect(await seatsTaken(pool)).toBe(1);
+        await expectSeatsMatchBookings(pool);
       }
     },
     RACE_TIMEOUT_MS,
