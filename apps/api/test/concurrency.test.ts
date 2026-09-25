@@ -1,0 +1,183 @@
+import type pg from 'pg';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { createPool } from '../src/db/client.js';
+import { driverSignUp, passengerSignUp, postJson, resetDb, signUpAs } from './support/accounts.js';
+import { TEST_DATABASE_URL } from './support/db.js';
+import {
+  BANANI,
+  GULSHAN_1,
+  MOHAKHALI,
+  acceptRequest,
+  driverAction,
+  errorCode,
+  expectSeatsMatchBookings,
+  goOnlineAt,
+  requestRide,
+  resetRides,
+  seatsTaken,
+  tripFrom,
+} from './support/rides.js';
+import { startTestServer, type TestServer } from './support/server.js';
+
+// Timing bugs don't show on every run, so each race is run many times (NFR-28).
+const ROUNDS = 25;
+const RACE_TIMEOUT_MS = 120_000;
+
+let pool: pg.Pool;
+let server: TestServer;
+let jashim: string;
+let nusrat: string;
+let rafiq: string;
+let shirin: string;
+let farida: string;
+let kamal: string;
+
+beforeAll(async () => {
+  pool = createPool(TEST_DATABASE_URL);
+  server = await startTestServer(pool);
+  await resetDb(pool);
+  jashim = await signUpAs(server, driverSignUp());
+  nusrat = await signUpAs(server, passengerSignUp());
+  rafiq = await signUpAs(
+    server,
+    passengerSignUp({ name: 'Rafiq', email: 'rafiq@example.com', gender: 'male' }),
+  );
+  shirin = await signUpAs(server, passengerSignUp({ name: 'Shirin', email: 'shirin@example.com' }));
+  farida = await signUpAs(server, passengerSignUp({ name: 'Farida', email: 'farida@example.com' }));
+  kamal = await signUpAs(
+    server,
+    passengerSignUp({ name: 'Kamal', email: 'kamal@example.com', gender: 'male' }),
+  );
+});
+
+afterAll(async () => {
+  await server.close();
+  await pool.end();
+});
+
+beforeEach(async () => {
+  await resetRides(pool);
+  await goOnlineAt(server, jashim);
+});
+
+async function statusOf(bookingId: string): Promise<string | undefined> {
+  const { rows } = await pool.query<{ status: string }>(
+    'SELECT status FROM bookings WHERE id = $1',
+    [bookingId],
+  );
+  return rows[0]?.status;
+}
+
+async function historyCount(bookingId: string): Promise<number> {
+  const { rows } = await pool.query('SELECT 1 FROM booking_status_history WHERE booking_id = $1', [
+    bookingId,
+  ]);
+  return rows.length;
+}
+
+// A response and its error code, if it failed.
+async function outcome(res: Response): Promise<{ status: number; code: string | null }> {
+  return { status: res.status, code: res.ok ? null : await errorCode(res) };
+}
+
+describe('the last seat (PRD §14, FR-R3, FR-C1)', () => {
+  it(
+    'goes to exactly one of Nusrat and Shirin',
+    async () => {
+      for (let round = 0; round < ROUNDS; round += 1) {
+        await resetRides(pool);
+        const rafiqs = await requestRide(server, rafiq, tripFrom(BANANI, { seats: 2 }));
+        expect((await acceptRequest(server, jashim, rafiqs.id)).status).toBe(200);
+        const nusrats = await requestRide(server, nusrat, tripFrom(BANANI));
+        const shirins = await requestRide(server, shirin, tripFrom(BANANI));
+
+        // Both see one seat left, and both accepts go in at once.
+        const results = await Promise.all(
+          [nusrats, shirins].map(async (b) => outcome(await acceptRequest(server, jashim, b.id))),
+        );
+
+        const winners = results.filter((r) => r.status === 200);
+        const losers = results.filter((r) => r.status !== 200);
+        expect(winners).toHaveLength(1);
+        expect(losers).toEqual([{ status: 409, code: 'SEATS_UNAVAILABLE' }]);
+
+        // The loser is untouched: still waiting, with only its request in the history.
+        const lost = results[0]?.status === 200 ? shirins : nusrats;
+        expect(await statusOf(lost.id)).toBe('REQUESTED');
+        expect(await historyCount(lost.id)).toBe(1);
+        expect(await seatsTaken(pool)).toBe(3);
+        await expectSeatsMatchBookings(pool);
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+});
+
+describe('many accepts into one Tesla (FR-R2, FR-C3)', () => {
+  it(
+    'never overfills Bullet, and retries fill it exactly',
+    async () => {
+      const riders = [nusrat, rafiq, shirin, farida, kamal];
+      for (let round = 0; round < ROUNDS; round += 1) {
+        await resetRides(pool);
+        const requests = [];
+        for (const rider of riders) requests.push(await requestRide(server, rider));
+
+        const results = await Promise.all(
+          requests.map(async (b) => outcome(await acceptRequest(server, jashim, b.id))),
+        );
+        const won = results.filter((r) => r.status === 200).length;
+        expect(won).toBeGreaterThanOrEqual(1);
+        expect(won).toBeLessThanOrEqual(3);
+        // An accept that lost is told why: no seat left, or the Tesla changed after its
+        // check, which is worth a retry.
+        for (const r of results.filter((x) => x.status !== 200)) {
+          expect(r.status).toBe(409);
+          expect(['SEATS_UNAVAILABLE', 'POOL_CHANGED']).toContain(r.code);
+        }
+        expect(await seatsTaken(pool)).toBe(won);
+        await expectSeatsMatchBookings(pool);
+
+        // The driver retries each one that was told to try again, one at a time.
+        for (const [i, r] of results.entries()) {
+          const request = requests[i];
+          if (r.code === 'POOL_CHANGED' && request) await acceptRequest(server, jashim, request.id);
+        }
+        expect(await seatsTaken(pool)).toBe(3);
+        await expectSeatsMatchBookings(pool);
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+
+  it(
+    'keeps seats right when accepts race cancels, with no deadlock (FR-C7)',
+    async () => {
+      for (let round = 0; round < ROUNDS; round += 1) {
+        await resetRides(pool);
+        const rafiqs = await requestRide(server, rafiq, tripFrom(BANANI, { seats: 2 }));
+        const nusrats = await requestRide(server, nusrat, tripFrom(MOHAKHALI));
+        await acceptRequest(server, jashim, rafiqs.id);
+        await acceptRequest(server, jashim, nusrats.id);
+        await driverAction(server, jashim, nusrats.id, 'arrive');
+        const shirins = await requestRide(server, shirin, tripFrom(GULSHAN_1));
+        const faridas = await requestRide(server, farida, tripFrom(BANANI));
+
+        // Every path that locks the Tesla and a booking, at once.
+        const responses = await Promise.all([
+          acceptRequest(server, jashim, shirins.id),
+          acceptRequest(server, jashim, faridas.id),
+          postJson(server, `/api/v1/bookings/${nusrats.id}/cancel`, {}, nusrat),
+          driverAction(server, jashim, rafiqs.id, 'cancel'),
+          postJson(server, `/api/v1/bookings/${rafiqs.id}/cancel`, {}, rafiq),
+          postJson(server, `/api/v1/bookings/${shirins.id}/cancel`, {}, shirin),
+        ]);
+
+        for (const res of responses) expect(res.status).toBeLessThan(500);
+        await expectSeatsMatchBookings(pool);
+        expect(await seatsTaken(pool)).toBeLessThanOrEqual(3);
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+});
