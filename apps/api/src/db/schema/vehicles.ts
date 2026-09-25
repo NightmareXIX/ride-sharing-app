@@ -22,6 +22,12 @@ export const vehicles = pgTable(
     // Set by hand on the map; there is no live GPS (FR-D4).
     currentLat: coordinate('current_lat'),
     currentLng: coordinate('current_lng'),
+    // Seats held by the bookings the Tesla carries. An accept claims them with a
+    // conditional update, and the CHECK below is the backstop (FR-C1).
+    occupiedSeats: integer('occupied_seats').notNull().default(0),
+    // Goes up on every write to the row, so an accept checked against an older view of
+    // the Tesla is noticed (FR-C3).
+    version: integer('version').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -33,6 +39,7 @@ export const vehicles = pgTable(
     check('vehicles_location_complete', sql`(${t.currentLat} IS NULL) = (${t.currentLng} IS NULL)`),
     // Backstop for LOCATION_REQUIRED: a Tesla can't be online without a location.
     check('vehicles_online_needs_location', sql`NOT ${t.isOnline} OR ${t.currentLat} IS NOT NULL`),
+    check('vehicles_occupied_seats_range', sql`${t.occupiedSeats} BETWEEN 0 AND ${t.capacity}`),
   ],
 );
 

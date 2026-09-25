@@ -166,17 +166,20 @@ describe('POST /driver/requests/:id/accept (FR-D8, FR-R4)', () => {
     expect(await errorCode(res)).toBe('DRIVER_OFFLINE');
   });
 
-  it('refuses a second ride while the Tesla has one, and hides the rest', async () => {
+  it('adds a second ride to the trip while seats are free (FR-R1)', async () => {
     await goOnlineAt(server, driver);
     const first = await requestRide(server, nusrat);
     const second = await requestRide(server, rafiq, tripFrom(GULSHAN_1));
-    await acceptRequest(server, driver, first.id);
+    const trip = (await (await acceptRequest(server, driver, first.id)).json()) as TripBody;
 
-    // One ride at a time until pooling (phase 5).
-    expect(await nearbyRequestIds(server, driver)).toEqual([]);
+    // Still listed: Bullet has two seats left.
+    expect(await nearbyRequestIds(server, driver)).toEqual([second.id]);
     const res = await acceptRequest(server, driver, second.id);
-    expect(res.status).toBe(422);
-    expect(await errorCode(res)).toBe('NO_LONGER_MATCHES');
+    expect(res.status).toBe(200);
+    const joined = (await res.json()) as TripBody & { pool: { seats: unknown } };
+    expect(joined.pool?.id).toBe(trip.pool?.id);
+    expect(joined.pool?.seats).toEqual({ capacity: 3, taken: 2 });
+    expect(joined.pool?.bookings.map((b) => b.id)).toEqual([first.id, second.id]);
   });
 
   it('refuses a pickup that is out of range', async () => {

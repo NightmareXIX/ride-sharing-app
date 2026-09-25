@@ -11,6 +11,7 @@ import {
 } from '../db/schema/index.js';
 import {
   ASSIGNED_STATUSES,
+  isAssigned,
   type AssignedStatus,
   type BookingStatus,
   type PaymentMethod,
@@ -18,6 +19,7 @@ import {
 } from '../domain/booking.js';
 import { isNearby, nextAction, type DispatchConfig, type NextAction } from '../domain/dispatch.js';
 import { finalFare, type RideOption } from '../domain/fare.js';
+import { fitsFreeSeats } from '../domain/seats.js';
 import { AppError } from '../http/errors.js';
 import type { Place } from './bookings.js';
 import { getFare, type FareBreakdown } from './fares.js';
@@ -41,15 +43,12 @@ export interface TripBooking {
   nextAction: NextAction;
 }
 
-// The driver's trip in progress.
+// The driver's trip in progress, with the Tesla's seats as they stand.
 export interface DriverTrip {
   id: string;
   createdAt: Date;
+  seats: { capacity: number; taken: number };
   bookings: TripBooking[];
-}
-
-function isAssigned(status: BookingStatus): status is AssignedStatus {
-  return (ASSIGNED_STATUSES as readonly BookingStatus[]).includes(status);
 }
 
 function notFound(): AppError {
@@ -74,12 +73,18 @@ export async function activePoolId(
 
 // The driver's current trip with every passenger in it, or null (FR-D14).
 export async function getDriverTrip(db: Database, driverId: string): Promise<DriverTrip | null> {
-  const [pool] = await db
-    .select({ id: pools.id, createdAt: pools.createdAt })
+  const [found] = await db
+    .select({
+      id: pools.id,
+      createdAt: pools.createdAt,
+      capacity: vehicles.capacity,
+      taken: vehicles.occupiedSeats,
+    })
     .from(pools)
     .innerJoin(vehicles, eq(vehicles.id, pools.vehicleId))
     .where(and(eq(vehicles.driverId, driverId), eq(pools.status, 'active')));
-  if (!pool) return null;
+  if (!found) return null;
+  const { capacity, taken, ...pool } = found;
 
   const rows = await db
     .select({
@@ -129,77 +134,152 @@ export async function getDriverTrip(db: Database, driverId: string): Promise<Dri
       },
     ];
   });
-  return { ...pool, bookings: trip };
+  return { ...pool, seats: { capacity, taken }, bookings: trip };
 }
 
-// The driver picks a request; nothing is auto-assigned (FR-D8). Everything is checked
-// again, since the list the driver saw may be seconds old. The Tesla is locked before the
-// booking, the order every driver action uses (FR-C7).
-export async function acceptRequest(
+// What an accept is checked against: the Tesla and the request, read without locks. The
+// commit applies only if the Tesla is still at `version` (FR-C3). Phase 5 plans the route
+// from it, between the check and the commit, so no transaction waits on the map service.
+export interface AcceptSnapshot {
+  vehicleId: string;
+  version: number;
+  bookingId: string;
+  seats: number;
+}
+
+async function readAccept(db: Database | Transaction, driverId: string, bookingId: string) {
+  const [tesla] = await db
+    .select({
+      id: vehicles.id,
+      capacity: vehicles.capacity,
+      occupiedSeats: vehicles.occupiedSeats,
+      version: vehicles.version,
+      isOnline: vehicles.isOnline,
+      lat: vehicles.currentLat,
+      lng: vehicles.currentLng,
+    })
+    .from(vehicles)
+    .where(eq(vehicles.driverId, driverId));
+  if (!tesla) throw noVehicle();
+
+  const [booking] = await db
+    .select({
+      status: bookings.status,
+      poolId: bookings.poolId,
+      seats: bookings.seats,
+      pickupLat: bookings.pickupLat,
+      pickupLng: bookings.pickupLng,
+    })
+    .from(bookings)
+    .where(eq(bookings.id, bookingId));
+  return { tesla, booking, currentPool: await activePoolId(db, tesla.id) };
+}
+
+type AcceptRead = Awaited<ReturnType<typeof readAccept>>;
+
+// Whether this Tesla may take this request, judged from rows as they were read. 'repeat'
+// means the driver already has it: a double tap or a retry (FR-C5, NFR-37). Anything that
+// stands in the way is thrown.
+function judgeAccept(
+  { tesla, booking, currentPool }: AcceptRead,
+  { searchRadiusKm }: DispatchConfig,
+): 'repeat' | 'ok' {
+  if (!tesla.isOnline || tesla.lat === null || tesla.lng === null) {
+    throw new AppError(422, 'DRIVER_OFFLINE', 'Go online to accept rides.');
+  }
+  if (!booking) throw notFound();
+  if (currentPool !== null && booking.poolId === currentPool) return 'repeat';
+
+  if (booking.status === 'CANCELLED') {
+    throw new AppError(409, 'INVALID_TRANSITION', 'This request was cancelled.');
+  }
+  if (booking.status === 'COMPLETED') {
+    throw new AppError(409, 'INVALID_TRANSITION', 'This ride has already finished.');
+  }
+  if (booking.status !== 'REQUESTED') {
+    throw new AppError(409, 'ALREADY_CLAIMED', 'Another driver took this ride.');
+  }
+  if (!fitsFreeSeats(tesla.capacity, tesla.occupiedSeats, booking.seats)) {
+    throw new AppError(
+      409,
+      'SEATS_UNAVAILABLE',
+      booking.seats > tesla.capacity
+        ? "Your Tesla doesn't have enough seats."
+        : 'Your Tesla has no free seat for this ride any more.',
+    );
+  }
+  // Until the matching rule arrives (phase 5, FR-L3), a request joins a Tesla, busy or
+  // not, when its pickup is in range. A Tesla with passengers can't move, so the range is
+  // measured from where its trip began.
+  const pickup = { lat: booking.pickupLat, lng: booking.pickupLng };
+  if (!isNearby({ lat: tesla.lat, lng: tesla.lng }, pickup, searchRadiusKm)) {
+    throw new AppError(422, 'NO_LONGER_MATCHES', 'This pickup is too far from your Tesla.');
+  }
+  return 'ok';
+}
+
+// Checks an accept without taking any lock. Null means the driver already has the ride.
+export async function checkAccept(
   db: Database,
   driverId: string,
   bookingId: string,
-  { searchRadiusKm }: DispatchConfig,
-): Promise<DriverTrip | null> {
+  dispatch: DispatchConfig,
+): Promise<AcceptSnapshot | null> {
+  const read = await readAccept(db, driverId, bookingId);
+  if (judgeAccept(read, dispatch) === 'repeat' || !read.booking) return null;
+  return {
+    vehicleId: read.tesla.id,
+    version: read.tesla.version,
+    bookingId,
+    seats: read.booking.seats,
+  };
+}
+
+// Claims the seats, then the request, in one transaction. The seat update is the claim: it
+// applies only while the Tesla is online, unchanged since the check and has room, so of two
+// accepts racing for the last seat exactly one gets a row back (FR-C1, FR-C3, FR-R3). It
+// also locks the Tesla before the booking, the order every driver action uses (FR-C7).
+export async function commitAccept(
+  db: Database,
+  driverId: string,
+  snapshot: AcceptSnapshot,
+  dispatch: DispatchConfig,
+): Promise<void> {
+  const { vehicleId, version, bookingId, seats } = snapshot;
   await db.transaction(async (tx) => {
-    const [tesla] = await tx
-      .select({
-        id: vehicles.id,
-        capacity: vehicles.capacity,
-        isOnline: vehicles.isOnline,
-        lat: vehicles.currentLat,
-        lng: vehicles.currentLng,
+    const [claimed] = await tx
+      .update(vehicles)
+      .set({
+        occupiedSeats: sql`${vehicles.occupiedSeats} + ${seats}`,
+        version: sql`${vehicles.version} + 1`,
+        updatedAt: sql`now()`,
       })
-      .from(vehicles)
-      .where(eq(vehicles.driverId, driverId))
-      .for('update');
-    if (!tesla) throw noVehicle();
-    if (!tesla.isOnline || tesla.lat === null || tesla.lng === null) {
-      throw new AppError(422, 'DRIVER_OFFLINE', 'Go online to accept rides.');
+      .where(
+        and(
+          eq(vehicles.id, vehicleId),
+          eq(vehicles.isOnline, true),
+          eq(vehicles.version, version),
+          sql`${vehicles.occupiedSeats} + ${seats} <= ${vehicles.capacity}`,
+        ),
+      )
+      .returning({ id: vehicles.id });
+
+    if (!claimed) {
+      // Something changed since the check. Judge again from the rows as they are now, so the
+      // driver hears why: another accept took the seats, the request went, and so on.
+      if (judgeAccept(await readAccept(tx, driverId, bookingId), dispatch) === 'repeat') return;
+      throw new AppError(409, 'POOL_CHANGED', 'Your trip changed while accepting. Try again.');
     }
 
-    const [booking] = await tx
-      .select({
-        status: bookings.status,
-        poolId: bookings.poolId,
-        seats: bookings.seats,
-        pickupLat: bookings.pickupLat,
-        pickupLng: bookings.pickupLng,
-      })
-      .from(bookings)
-      .where(eq(bookings.id, bookingId))
-      .for('update');
-    if (!booking) throw notFound();
-
-    const current = await activePoolId(tx, tesla.id);
-    // Already accepted by this driver: a double tap or a retry (FR-C5, NFR-37).
-    if (current !== null && booking.poolId === current) return;
-
-    if (booking.status === 'CANCELLED') {
-      throw new AppError(409, 'INVALID_TRANSITION', 'This request was cancelled.');
-    }
-    if (booking.status === 'COMPLETED') {
-      throw new AppError(409, 'INVALID_TRANSITION', 'This ride has already finished.');
-    }
-    if (booking.status !== 'REQUESTED') {
-      throw new AppError(409, 'ALREADY_CLAIMED', 'Another driver took this ride.');
-    }
-    // One ride at a time until pooling arrives (phase 5).
-    if (current !== null) {
-      throw new AppError(422, 'NO_LONGER_MATCHES', 'Finish your current ride first.');
-    }
-    if (booking.seats > tesla.capacity) {
-      throw new AppError(409, 'SEATS_UNAVAILABLE', "Your Tesla doesn't have enough seats.");
-    }
-    const pickup = { lat: booking.pickupLat, lng: booking.pickupLng };
-    if (!isNearby({ lat: tesla.lat, lng: tesla.lng }, pickup, searchRadiusKm)) {
-      throw new AppError(422, 'NO_LONGER_MATCHES', 'This pickup is too far from your Tesla.');
+    let poolId = await activePoolId(tx, vehicleId);
+    if (poolId === null) {
+      const [pool] = await tx.insert(pools).values({ vehicleId }).returning({ id: pools.id });
+      if (!pool) throw new Error('Inserting the pool returned no row');
+      poolId = pool.id;
     }
 
-    const [pool] = await tx.insert(pools).values({ vehicleId: tesla.id }).returning();
-    if (!pool) throw new Error('Inserting the pool returned no row');
-
-    // The booking is locked and REQUESTED, so this conditional update can't miss (FR-C2).
+    // Only one driver's conditional update moves the request out of REQUESTED (FR-C2). A
+    // loser throws, and the rollback gives back its seats and any trip it started.
     const outcome = await transitionBooking(tx, {
       bookingId,
       owner: sql`true`,
@@ -207,12 +287,45 @@ export async function acceptRequest(
       to: 'ACCEPTED',
       actor: { id: driverId, role: 'driver' },
       reason: 'accepted',
-      set: { poolId: pool.id, acceptedAt: sql`now()` },
+      set: { poolId, acceptedAt: sql`now()` },
     });
-    if (!outcome.ok) throw new Error(`Booking ${bookingId} changed while locked`);
+    if (outcome.ok) return;
+    if (outcome.current === null) throw notFound();
+    if (outcome.current === 'CANCELLED') {
+      throw new AppError(409, 'INVALID_TRANSITION', 'This request was cancelled.');
+    }
+    throw new AppError(409, 'ALREADY_CLAIMED', 'Another driver took this ride.');
   });
+}
 
+// The driver picks a request; nothing is auto-assigned (FR-D8). Everything is checked
+// again, since the list the driver saw may be seconds old.
+export async function acceptRequest(
+  db: Database,
+  driverId: string,
+  bookingId: string,
+  dispatch: DispatchConfig,
+): Promise<DriverTrip | null> {
+  const snapshot = await checkAccept(db, driverId, bookingId, dispatch);
+  if (snapshot) await commitAccept(db, driverId, snapshot, dispatch);
   return getDriverTrip(db, driverId);
+}
+
+// Gives a booking's seats back to its Tesla, in the transaction that took the booking out
+// of it (FR-R2). The CHECK refuses a count below zero.
+export async function releaseSeats(
+  tx: Transaction,
+  vehicleId: string,
+  seats: number,
+): Promise<void> {
+  await tx
+    .update(vehicles)
+    .set({
+      occupiedSeats: sql`${vehicles.occupiedSeats} - ${seats}`,
+      version: sql`${vehicles.version} + 1`,
+      updatedAt: sql`now()`,
+    })
+    .where(eq(vehicles.id, vehicleId));
 }
 
 // Ends the trip once none of its bookings is still with the driver (FR-R7). Runs in the
@@ -294,7 +407,7 @@ async function takeStep(
   driverId: string,
   bookingId: string,
   action: NextAction,
-  andThen?: (tx: Transaction, poolId: string) => Promise<void>,
+  andThen?: (tx: Transaction, done: StepDone) => Promise<void>,
 ): Promise<void> {
   const step: TripStep = STEPS[action];
   await db.transaction(async (tx) => {
@@ -309,12 +422,21 @@ async function takeStep(
       set: step.set,
     });
     if (outcome.ok) {
-      if (andThen && outcome.poolId) await andThen(tx, outcome.poolId);
+      if (andThen && outcome.poolId) {
+        await andThen(tx, { vehicleId, poolId: outcome.poolId, seats: outcome.seats });
+      }
       return;
     }
     if (outcome.current === null) throw notFound();
     if (outcome.current !== step.to) throw outOfStep(outcome.current);
   });
+}
+
+// What a step's follow-up needs: the Tesla, the trip and the passenger's seats.
+interface StepDone {
+  vehicleId: string;
+  poolId: string;
+  seats: number;
 }
 
 export async function markArrived(
@@ -341,8 +463,8 @@ export interface CompletedTrip {
   fare: FareBreakdown;
 }
 
-// The passenger is dropped off: the booking completes, its fare is recorded and the trip
-// ends if nobody else is aboard, all in one transaction (NFR-14). Cash is paid in person
+// The passenger is dropped off: the booking completes, its fare is recorded, its seats are
+// freed and the trip ends if nobody else is aboard, all in one transaction (NFR-14). Cash is paid in person
 // (FR-W5); ledger entries arrive in phase 6.
 export async function completeTrip(
   db: Database,
@@ -376,7 +498,7 @@ export async function completeTrip(
     booking.rideOption,
   );
 
-  await takeStep(db, driverId, bookingId, 'complete', async (tx, poolId) => {
+  await takeStep(db, driverId, bookingId, 'complete', async (tx, { vehicleId, poolId, seats }) => {
     await tx.insert(fares).values({
       bookingId,
       pickupOdometerKm,
@@ -393,6 +515,7 @@ export async function completeTrip(
       finalFare: fare.finalFare,
       distanceMethod: booking.distanceMethod,
     });
+    await releaseSeats(tx, vehicleId, seats);
     await finishPoolIfDone(tx, poolId);
   });
 
@@ -414,8 +537,8 @@ async function cancelledLastBy(tx: Transaction, bookingId: string, driverId: str
 }
 
 // The driver drops a passenger before pickup (FR-D12). The request goes back to REQUESTED,
-// visible to every driver again, and keeps its place in the queue. The history keeps the
-// pool it left. The penalty for a late cancel (FR-D13) arrives in phase 6.
+// visible to every driver again, and keeps its place in the queue. Its seats are freed, and
+// the history keeps the pool it left. The penalty for a late cancel (FR-D13) arrives in phase 6.
 export async function driverCancel(
   db: Database,
   driverId: string,
@@ -433,6 +556,7 @@ export async function driverCancel(
       set: { poolId: null, acceptedAt: null, arrivedAt: null },
     });
     if (outcome.ok) {
+      await releaseSeats(tx, vehicleId, outcome.seats);
       if (outcome.poolId) await finishPoolIfDone(tx, outcome.poolId);
       return;
     }

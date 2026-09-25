@@ -124,9 +124,17 @@ export function DriverTripCard({
 }) {
   return (
     <section
-      aria-label="Your current ride"
+      aria-labelledby="current-trip-heading"
       className="rounded-xl bg-white p-5 ring-1 ring-slate-200"
     >
+      <div className="mb-4 flex items-baseline justify-between gap-3">
+        <h2 id="current-trip-heading" className="text-sm font-medium text-slate-500">
+          In your Tesla
+        </h2>
+        <p className="text-sm text-slate-500 tabular-nums">
+          {trip.bookings.length} {trip.bookings.length === 1 ? 'passenger' : 'passengers'}
+        </p>
+      </div>
       <div className="divide-y divide-slate-100">
         {trip.bookings.map((booking) => (
           <div key={booking.id} className="py-4 first:pt-0 last:pb-0">

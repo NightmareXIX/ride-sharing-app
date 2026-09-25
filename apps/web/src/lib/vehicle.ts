@@ -5,6 +5,8 @@ export interface DriverVehicle {
   id: string;
   name: string;
   capacity: number;
+  // Seats held by the passengers aboard or on their way.
+  occupiedSeats: number;
   isOnline: boolean;
   location: LatLng | null;
 }

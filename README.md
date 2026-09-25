@@ -27,6 +27,7 @@ The Tesla never carries more people than it has seats, and every passenger pays 
 - [Tests and checks](#tests-and-checks)
 - [Demo credentials](#demo-credentials)
 - [API overview](#api-overview)
+- [Concurrency](#concurrency)
 - [Assumptions](#assumptions)
 - [Known limitations](#known-limitations)
 - [Still to come](#still-to-come)
@@ -231,10 +232,11 @@ Covered so far:
 - Access: another passenger's booking is 404; drivers get 403 on passenger routes
 - Cancel: free while waiting, safe to repeat, and logged in a history the database won't
   let anyone edit or delete
-- Nearby requests: hidden from offline and busy drivers, and outside the search radius or
-  the Tesla's seats; oldest first; never naming the passenger
-- Accept: opens a trip with its history row; a repeat returns the same trip; a second
-  driver gets `ALREADY_CLAIMED`; offline, busy and out-of-range accepts refused
+- Nearby requests: hidden from offline drivers and full Teslas, and outside the search
+  radius or the free seats; oldest first; never naming the passenger
+- Accept: opens a trip with its history row, or joins the one running while seats are
+  free; a repeat returns the same trip; a second driver gets `ALREADY_CLAIMED`; offline and
+  out-of-range accepts refused
 - Trip steps: arrive, start and complete in order, each repeat harmless, skipped steps
   refused, another driver's passenger 404
 - Final fare: the FR §8 pooled examples (116.00, 174.00, 182.70), capped at the estimate,
@@ -244,6 +246,13 @@ Covered so far:
 - Passenger cancel after acceptance: free within 3 minutes and recorded as `late_cancel`
   after, by the database clock; refused once the trip starts
 - A driver with a passenger can't go offline or move their Tesla
+- Seat limit: Bullet fills seat by seat and then refuses; every way out of a trip frees
+  its seats once; raw SQL can't overfill a Tesla; an accept against an out-of-date Tesla
+  gets `POOL_CHANGED`; co-passengers never see each other
+- Races, 25 rounds each against Postgres: Nusrat and Shirin for the last seat (exactly one
+  wins); five accepts into one Tesla (never more than 3); accepts racing cancels (seats
+  stay right, no deadlock); three drivers for one request (one wins); a double-tapped
+  accept (one trip); five requests from one passenger (one booking)
 
 ## Demo credentials
 
@@ -266,6 +275,12 @@ seconds it appears in Jashim's nearby requests. Accept it, then tap **Arrived at
 **start trip** and **complete trip**. Nusrat's screen follows each step and ends with the
 fare to pay in cash and how it was worked out. To see a driver cancel, tap **Cancel ride**
 before starting: the request goes back to waiting and Nusrat is told why.
+
+To see the last-seat race: with Jashim online at Banani Road 11, have Rafiq request 2 seats
+to Gulshan 1 and accept it. Bullet shows 2 of 3 seats taken. Then have Nusrat and Shirin
+each request 1 seat, open Jashim's screen in two tabs and tap **Accept** on a different
+request in each at the same moment. One gets the seat; the other is told there is no free
+seat any more, and Bullet shows 3 of 3.
 
 ## API overview
 
@@ -326,6 +341,12 @@ starts. The booking body gains the driver and Tesla, each step's time, `freeCanc
 `notice` after a driver cancel, and the `fare` breakdown once completed. Shapes and rules
 are in the [phase 3 LLD](docs/lld/phase-3-driver-flow.md#3-routes).
 
+Seats and concurrency (phase 4) adds no routes. A Tesla with free seats keeps seeing
+requests that fit them, and an accept joins the trip already running. `GET /driver/vehicle`
+gains `occupiedSeats`, and the trip body gains `seats: { capacity, taken }`. An accept can
+now also fail with 409 `POOL_CHANGED` when the Tesla changed while it was being accepted.
+Shapes and rules are in the [phase 4 LLD](docs/lld/phase-4-seat-capacity.md#3-routes).
+
 Every error has the same shape (NFR-35):
 
 ```json
@@ -334,6 +355,47 @@ Every error has the same shape (NFR-35):
 
 Every response carries an `X-Request-Id` header, and the same id appears on that
 request's log line (NFR-42).
+
+## Concurrency
+
+The PRD's problem: Bullet has one seat left, and Nusrat and Shirin both try to claim it at
+nearly the same instant, both having seen one seat free. Here a driver accepts requests
+rather than passengers picking a Tesla (FR-D8), so the race is two accepts into Bullet at
+once: two taps, two tabs, or a retry landing beside the original.
+
+**How it's handled now.** Every rule is enforced by Postgres, not by the API's memory, so
+it holds with any number of API copies (NFR-19, NFR-20).
+
+| Rule                                    | How                                                                                                                                                                                                                                                                                                                                                                                                |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Seats never exceed capacity (FR-C1)     | An accept claims its seats with one statement: `UPDATE vehicles SET occupied_seats = occupied_seats + $seats, version = version + 1 WHERE id = $tesla AND is_online AND version = $seen AND occupied_seats + $seats <= capacity`. A second accept waits for the row lock, then Postgres checks its `WHERE` again against the new row. `CHECK (occupied_seats BETWEEN 0 AND capacity)` backs it up. |
+| Exactly one wins the last seat (FR-R3)  | The same statement. The loser gets 0 rows, then 409 `SEATS_UNAVAILABLE`, and its transaction changes nothing.                                                                                                                                                                                                                                                                                      |
+| Out-of-date accepts are refused (FR-C3) | Every write to a Tesla bumps its `version`. An accept is checked without locks and committed only if the version hasn't moved; otherwise 409 `POOL_CHANGED`, try again. Phase 5 plans the route in that gap, so no transaction waits on the map service.                                                                                                                                           |
+| One driver per request (FR-C2)          | `UPDATE bookings … WHERE status = 'REQUESTED'`. The losing driver gets `ALREADY_CLAIMED`, and the rollback returns its seats.                                                                                                                                                                                                                                                                      |
+| Double taps (FR-C5, NFR-37)             | A repeated accept returns the same trip; a repeated request returns the same booking.                                                                                                                                                                                                                                                                                                              |
+| One active booking (FR-C6)              | A partial unique index on `bookings(passenger_id)` for unfinished states.                                                                                                                                                                                                                                                                                                                          |
+| No deadlocks (FR-C7)                    | Every transaction locks the Tesla, then the booking, then the trip. A passenger cancel finds its Tesla first and locks it before the booking, retrying if the booking changed Tesla in between.                                                                                                                                                                                                    |
+
+[`apps/api/test/concurrency.test.ts`](apps/api/test/concurrency.test.ts) fires each race
+with `Promise.all` against a real Postgres, 25 rounds each. After every round it checks
+that each Tesla's seats taken equal the seats of the bookings it carries.
+
+**The trade-off.** The version check is optimistic. When several accepts hit one Tesla at
+the same moment, some are told `POOL_CHANGED` even though a seat was free. One driver
+rarely taps that fast, and a retry succeeds.
+
+**What we'd change at larger scale.**
+
+- Keep the seat claim as a single-row conditional update, and shard by area so a Tesla,
+  its trip and its bookings live on one shard and the claim never spans two.
+- Serve the nearby-request list from a read replica or a geo index (Redis GEO) instead of
+  the primary; only the claim needs the primary.
+- Push changes over WebSockets instead of polling every 4 s, so drivers act on fresher
+  lists and fewer accepts are out of date.
+- Send idempotency keys with accepts and requests, so retries across dropped connections
+  are recognised even after the first attempt finished.
+- If one shard can't keep up, queue accepts per Tesla (a partitioned log keyed by vehicle)
+  so they apply in order, with the database check still as the backstop.
 
 ## Assumptions
 
@@ -354,8 +416,9 @@ request's log line (NFR-42).
 - **Two rules arrive early.** One active booking per passenger (FR-C6) and the balance
   checks (FR-W3, FR-W7) were planned for phases 4 and 6. They are enforced from phase 2
   because creating a request depends on them.
-- **One passenger per Tesla until pooling.** A driver sees requests and can accept only
-  while idle. Phase 5 replaces this with the matching rule (FR-L3).
+- **A stand-in joining rule until pooling.** A Tesla with passengers takes more requests
+  that fit its free seats and whose pickup is within the search radius of where its trip
+  began. Phase 5 replaces the radius check with the matching rule (FR-L3).
 - **Nearby means a straight line.** The 2 km search radius is measured as the crow flies
   from the Tesla, so refreshing the list never waits on the map service.
 - **A single ride's odometer.** Until route stops exist (phase 5), a ride runs straight

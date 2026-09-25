@@ -9,6 +9,7 @@ import { FormAlert } from '@/components/forms';
 import { MapPicker, type MapMarker } from '@/components/MapPicker';
 import { NearbyRequests } from '@/components/NearbyRequests';
 import { QuickPicks } from '@/components/QuickPicks';
+import { SeatMeter } from '@/components/SeatMeter';
 import type { Account } from '@/lib/account';
 import { api, ApiError } from '@/lib/api';
 import type { LatLng } from '@/lib/geo';
@@ -95,8 +96,12 @@ function DriverDashboard({ account }: { account: Account }) {
     [router],
   );
 
-  // Nearby requests, while online with no passenger (FR-D5, FR-D6, NFR-3).
-  const searching = vehicle?.isOnline === true && trip === null;
+  // The Tesla's seats: the trip reports them as they stand, and with no trip all are free.
+  const seats = trip?.seats ?? { capacity: vehicle?.capacity ?? 0, taken: 0 };
+  const seatsFree = seats.capacity - seats.taken;
+
+  // Nearby requests, while online with a seat free (FR-D5, FR-D6, FR-D9, NFR-3).
+  const searching = vehicle?.isOnline === true && seatsFree > 0;
   const refreshRequests = useCallback(async () => {
     try {
       const body = await api<{ requests: NearbyRequest[] }>('/driver/requests');
@@ -113,10 +118,18 @@ function DriverDashboard({ account }: { account: Account }) {
   // The trip in progress: a passenger may cancel at any moment (FR-P7).
   usePolling(async () => {
     const startedAt = tripChanges.current;
+    const before = trip?.bookings ?? [];
     try {
       const body = await api<{ pool: DriverTrip | null }>('/driver/pool');
       if (tripChanges.current !== startedAt) return;
-      if (!body.pool) setNotice('Your passenger cancelled the ride.');
+      // This driver's own steps update the trip straight away, so a passenger who leaves
+      // between polls has cancelled.
+      const after = new Set(body.pool?.bookings.map((booking) => booking.id));
+      const gone = before.filter((booking) => !after.has(booking.id));
+      if (gone.length > 0) {
+        const names = gone.map((booking) => booking.passenger.name).join(' and ');
+        setNotice(`${names} cancelled ${gone.length === 1 ? 'their ride' : 'their rides'}.`);
+      }
       setTrip(body.pool);
       setConnectionLost(false);
     } catch (err) {
@@ -158,14 +171,15 @@ function DriverDashboard({ account }: { account: Account }) {
     setAccepting(request.id);
     setAlert('');
     setNotice('');
-    setCompleted(null);
     try {
       const body = await api<{ pool: DriverTrip | null }>(`/driver/requests/${request.id}/accept`, {
         method: 'POST',
       });
       showTrip(body.pool);
-      setRequests(null);
+      // With seats still free, the rest of the list stays up.
+      setRequests((listed) => listed?.filter((other) => other.id !== request.id) ?? null);
     } catch (err) {
+      // Another accept may have taken the seats or the request: show the list as it is now.
       setAlert((err as Error).message);
       void refreshRequests();
     } finally {
@@ -276,7 +290,7 @@ function DriverDashboard({ account }: { account: Account }) {
         </p>
       )}
 
-      {notice && !trip && (
+      {notice && (
         <p role="status" className="rounded-lg bg-slate-100 px-3 py-2.5 text-sm text-slate-700">
           {notice}
         </p>
@@ -285,7 +299,19 @@ function DriverDashboard({ account }: { account: Account }) {
       {trip && (
         <DriverTripCard trip={trip} pendingId={stepping} onStep={step} onCancel={cancelRide} />
       )}
-      {searching && <NearbyRequests requests={requests} accepting={accepting} onAccept={accept} />}
+      {searching && (
+        <NearbyRequests
+          requests={requests}
+          freeSeats={seatsFree}
+          accepting={accepting}
+          onAccept={accept}
+        />
+      )}
+      {vehicle.isOnline && seatsFree === 0 && (
+        <p className="rounded-xl border border-dashed border-slate-300 p-5 text-slate-600">
+          {vehicle.name} is full. New requests show here again when a seat frees up.
+        </p>
+      )}
       {!vehicle.isOnline && (
         <p className="rounded-xl border border-dashed border-slate-300 p-5 text-slate-600">
           Go online to receive ride requests.
@@ -297,9 +323,9 @@ function DriverDashboard({ account }: { account: Account }) {
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-3xl font-semibold">{vehicle.name}</p>
-              <p className="mt-1 text-slate-600">
-                {vehicle.capacity} passenger {vehicle.capacity === 1 ? 'seat' : 'seats'}
-              </p>
+              <div className="mt-2">
+                <SeatMeter capacity={seats.capacity} taken={seats.taken} />
+              </div>
             </div>
             <StatusPill online={vehicle.isOnline} />
           </div>

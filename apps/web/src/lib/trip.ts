@@ -37,10 +37,11 @@ export interface TripBooking {
   nextAction: NextAction;
 }
 
-// The body of GET /driver/pool and every trip action.
+// The body of GET /driver/pool and every trip action, with the Tesla's seats as they stand.
 export interface DriverTrip {
   id: string;
   createdAt: string;
+  seats: { capacity: number; taken: number };
   bookings: TripBooking[];
 }
 

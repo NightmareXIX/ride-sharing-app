@@ -57,6 +57,13 @@
       "when": 1790326576298,
       "tag": "0007_create_fares",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790333636005,
+      "tag": "0008_add_vehicle_seats",
+      "breakpoints": true
     }
   ]
 }

@@ -10,6 +10,8 @@ export interface DriverVehicle {
   id: string;
   name: string;
   capacity: number;
+  // Seats held by the passengers aboard or on their way (FR-R2).
+  occupiedSeats: number;
   isOnline: boolean;
   location: LatLng | null;
 }
@@ -18,6 +20,7 @@ const vehicleColumns = {
   id: vehicles.id,
   name: vehicles.name,
   capacity: vehicles.capacity,
+  occupiedSeats: vehicles.occupiedSeats,
   isOnline: vehicles.isOnline,
   currentLat: vehicles.currentLat,
   currentLng: vehicles.currentLng,
@@ -25,7 +28,7 @@ const vehicleColumns = {
 
 type VehicleRow = Pick<
   Vehicle,
-  'id' | 'name' | 'capacity' | 'isOnline' | 'currentLat' | 'currentLng'
+  'id' | 'name' | 'capacity' | 'occupiedSeats' | 'isOnline' | 'currentLat' | 'currentLng'
 >;
 
 function toDriverVehicle({ currentLat, currentLng, ...rest }: VehicleRow): DriverVehicle {
@@ -50,12 +53,16 @@ export async function getDriverVehicle(db: Database, driverId: string): Promise<
   return toDriverVehicle(row);
 }
 
+// Every change to a Tesla bumps its version, so an accept checked against the Tesla as it
+// was is noticed (FR-C3).
+const touched = { version: sql`${vehicles.version} + 1`, updatedAt: sql`now()` };
+
 // Only a Tesla with a location can go online, since nearby requests are found from it.
 // Going online twice is harmless (NFR-37).
 export async function goOnline(db: Database, driverId: string): Promise<DriverVehicle> {
   const [row] = await db
     .update(vehicles)
-    .set({ isOnline: true, updatedAt: sql`now()` })
+    .set({ isOnline: true, ...touched })
     .where(and(byDriver(driverId), isNotNull(vehicles.currentLat)))
     .returning(vehicleColumns);
   if (row) return toDriverVehicle(row);
@@ -86,7 +93,7 @@ async function updateIdleVehicle(
 
     const [row] = await tx
       .update(vehicles)
-      .set({ ...set, updatedAt: sql`now()` })
+      .set({ ...set, ...touched })
       .where(eq(vehicles.id, tesla.id))
       .returning(vehicleColumns);
     if (!row) throw new Error(`Vehicle ${tesla.id} vanished while locked`);
