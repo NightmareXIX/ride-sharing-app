@@ -514,6 +514,7 @@ export async function completeTrip(
       computedFare: fare.computedFare,
       finalFare: fare.finalFare,
       distanceMethod: booking.distanceMethod,
+      routeDistanceMethod: booking.distanceMethod,
     });
     await releaseSeats(tx, vehicleId, seats);
     await finishPoolIfDone(tx, poolId);

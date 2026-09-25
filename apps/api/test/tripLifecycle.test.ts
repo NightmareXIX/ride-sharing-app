@@ -124,6 +124,7 @@ describe('a single ride, pickup to drop-off (FR-D10)', () => {
       sharedKm: '0.000',
       directKm: booking.directKm,
       distanceMethod: 'fallback',
+      routeDistanceMethod: 'fallback',
       baseFare: '30.00',
       perKmRate: '20.00',
       sharedKmDiscount: '8.00',

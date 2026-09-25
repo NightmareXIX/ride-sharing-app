@@ -64,6 +64,20 @@
       "when": 1790333636005,
       "tag": "0008_add_vehicle_seats",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790340305737,
+      "tag": "0009_create_route_stops",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790340347687,
+      "tag": "0010_add_fare_route_method",
+      "breakpoints": true
     }
   ]
 }

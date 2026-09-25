@@ -11,7 +11,10 @@ export interface FareBreakdown {
   actualKm: string;
   sharedKm: string;
   directKm: string;
+  // How direct_km, and so the estimate, was measured.
   distanceMethod: DistanceMethod;
+  // How the ride's own legs were measured (NFR-13).
+  routeDistanceMethod: DistanceMethod;
   baseFare: string;
   perKmRate: string;
   sharedKmDiscount: string;
@@ -31,6 +34,7 @@ export const fareColumns = {
   sharedKm: fares.sharedKm,
   directKm: fares.directKm,
   distanceMethod: fares.distanceMethod,
+  routeDistanceMethod: fares.routeDistanceMethod,
   seats: fares.seats,
   seatMultiplier: fares.seatMultiplier,
   rideOption: fares.rideOption,

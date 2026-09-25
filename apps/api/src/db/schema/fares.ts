@@ -42,7 +42,10 @@ export const fares = pgTable(
     estimatedFare: money('estimated_fare').notNull(),
     computedFare: money('computed_fare').notNull(),
     finalFare: money('final_fare').notNull(),
+    // How direct_km, and so the estimate, was measured (NFR-13).
     distanceMethod: distanceMethod('distance_method').notNull(),
+    // How the legs of the ride itself were measured: fallback if any leg was.
+    routeDistanceMethod: distanceMethod('route_distance_method').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
