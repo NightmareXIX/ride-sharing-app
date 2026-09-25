@@ -133,7 +133,7 @@ One finished trip: the summary above, the Tesla's name, and every passenger.
 { "earnings": { "total": "123.44", "cash": "71.42", "teslapay": "52.02", "rides": 2 } }
 ```
 
-- It covers all time, as API Routes §9 asks.
+- It covers all time, as API Routes §9 asks. `rides` counts the completed rides.
 - The ride-by-ride list is already paged twice: by trip in `/driver/pools`, and by entry in `/wallet/transactions` (NFR-36). This route returns only the totals.
 
 ### Error codes added in this phase
@@ -162,11 +162,13 @@ A booking can be dropped, accepted again by the same trip and completed. It then
 | Figure | Source |
 |---|---|
 | A trip's earnings | `sum(fares.final_fare)` over the trip's `COMPLETED` bookings, split by `bookings.payment_method` |
-| The driver's totals | The ledger: the driver's `cash_earning` entries (cash) and `driver_credit` entries (TeslaPay). `rides` counts them. |
+| The driver's totals | The same sum over every trip of the driver's Tesla |
 
 Fines and top-ups never count, and a penalty costs nothing yet (FR §13). Sums are `numeric(12,2)` and sent as strings (API Routes §1).
 
-**The invariant**, checked in the tests: the driver's `earnings.total` = the sum of every trip's `earnings.total` = the sum of the driver's `cash_earning` and `driver_credit` ledger entries. The ride is settled in the transaction that writes its fare (FR-C7), so they can't disagree.
+The totals come from the stored fares, not the ledger, so they always equal the sum of the trips. Each completed ride was also settled into the ledger in the transaction that wrote its fare (FR-C7), as a `cash_earning` or a `driver_credit`. Rides completed before the ledger existed (phase 6) have a fare but no ledger entry, and still count.
+
+**The invariant**, checked in the tests: the driver's `earnings.total` = the sum of every trip's `earnings.total` = the sum of the driver's `cash_earning` and `driver_credit` ledger entries, for rides settled since the ledger began.
 
 ### Where each guarantee lives
 

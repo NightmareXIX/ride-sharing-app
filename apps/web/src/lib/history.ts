@@ -37,7 +37,7 @@ export interface EarningsSplit {
   teslapay: string;
 }
 
-// The body of GET /driver/earnings: all-time totals from the ledger.
+// The body of GET /driver/earnings: all-time totals over every completed ride.
 export interface Earnings extends EarningsSplit {
   rides: number;
 }

@@ -9,8 +9,6 @@ import {
   pools,
   users,
   vehicles,
-  wallets,
-  walletTransactions,
 } from '../db/schema/index.js';
 import { FINAL_STATUSES, type PaymentMethod } from '../domain/booking.js';
 import type { RideOption } from '../domain/fare.js';
@@ -20,7 +18,7 @@ import type { Place } from './bookings.js';
 import { fareColumns, toFareBreakdown, type FareBreakdown } from './fares.js';
 
 // A driver's finished trips and what they earned (FR-D15). Everything here is read from
-// what the trip stored as it happened: fares, status history and the ledger. Nothing is
+// what the trip stored as it happened: fares, status history and penalties. Nothing is
 // worked out again (NFR-41).
 
 // Money earned, as strings such as "123.44" (API Routes §1).
@@ -69,7 +67,7 @@ export interface PastTrip extends TripSummary {
   bookings: PastTripBooking[];
 }
 
-// The driver's totals, from the ledger (FR-W8).
+// The driver's totals over every completed ride.
 export interface Earnings extends EarningsSplit {
   rides: number;
 }
@@ -285,28 +283,28 @@ export async function getPastTrip(
   return { ...toTripSummary(trip), vehicle: { name: trip.vehicleName }, bookings: entries };
 }
 
-// The driver's earnings over all time, from the ledger: cash fares recorded as earnings,
-// and TeslaPay fares credited to the wallet (FR-W4, FR-W5, FR-W8). Fines and top-ups are
-// never earnings.
+// The driver's earnings over all time: the stored final fare of every ride they completed,
+// split by how it was paid (FR-D15). This is the source each trip's earnings come from, so
+// the totals always equal the sum of the trips. Each of these fares was also settled into
+// the ledger, as a cash earning or a TeslaPay credit, in the transaction that recorded it
+// (FR-W4, FR-W5, FR-C7). Rides completed before the ledger existed have no entry there,
+// and still count here. Fines and top-ups are never earnings.
 export async function getEarnings(db: Database, driverId: string): Promise<Earnings> {
-  const amount = walletTransactions.amount;
+  const fare = fares.finalFare;
+  const paidBy = (method: PaymentMethod) =>
+    money(sql`sum(${fare}) FILTER (WHERE ${bookings.paymentMethod} = ${method})`);
   const [row] = await db
     .select({
-      total: money(sql`sum(${amount})`),
-      cash: money(sql`sum(${amount}) FILTER (WHERE ${walletTransactions.type} = 'cash_earning')`),
-      teslapay: money(
-        sql`sum(${amount}) FILTER (WHERE ${walletTransactions.type} = 'driver_credit')`,
-      ),
+      total: money(sql`sum(${fare})`),
+      cash: paidBy('cash'),
+      teslapay: paidBy('teslapay'),
       rides: sql<number>`count(*)`.mapWith(Number),
     })
-    .from(walletTransactions)
-    .innerJoin(wallets, eq(wallets.id, walletTransactions.walletId))
-    .where(
-      and(
-        eq(wallets.userId, driverId),
-        inArray(walletTransactions.type, ['cash_earning', 'driver_credit']),
-      ),
-    );
+    .from(fares)
+    .innerJoin(bookings, eq(bookings.id, fares.bookingId))
+    .innerJoin(pools, eq(pools.id, bookings.poolId))
+    .innerJoin(vehicles, eq(vehicles.id, pools.vehicleId))
+    .where(and(eq(vehicles.driverId, driverId), eq(bookings.status, 'COMPLETED')));
   if (!row) throw new Error('An aggregate returned no row');
   return row;
 }
