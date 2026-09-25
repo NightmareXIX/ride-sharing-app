@@ -28,6 +28,7 @@ The Tesla never carries more people than it has seats, and every passenger pays 
 - [Demo credentials](#demo-credentials)
 - [API overview](#api-overview)
 - [Pooling](#pooling)
+- [TeslaPay and fines](#teslapay-and-fines)
 - [Concurrency](#concurrency)
 - [Assumptions](#assumptions)
 - [Known limitations](#known-limitations)
@@ -55,13 +56,17 @@ The specs are the source of truth for every phase:
 | [Phase 1 LLD: accounts](docs/lld/phase-1-accounts.md)                               | Tables, sessions, routes and tests for sign-up and sign-in            |
 | [Phase 2 LLD: ride requests](docs/lld/phase-2-ride-request.md)                      | Availability, road distance, fare estimate, request and cancel        |
 | [Phase 3 LLD: driver flow](docs/lld/phase-3-driver-flow.md)                         | Nearby requests, accept, arrive, start, complete, cancels, final fare |
+| [Phase 4 LLD: seats and concurrency](docs/lld/phase-4-seat-capacity.md)             | Seat claims, stale accepts, lock order, the last-seat race            |
+| [Phase 5 LLD: pooling](docs/lld/phase-5-tesla-pooling.md)                           | Route stops, odometer readings, the matching rule, shared-km fares    |
+| [Phase 6 LLD: TeslaPay and fines](docs/lld/phase-6-teslapay.md)                     | Wallet ledger, top-ups, settlement, fines, no-show, driver penalties  |
 
 - Architecture: [docs/Architecture Diagram-selection.png](docs/Architecture%20Diagram-selection.png)
 - ERD: [docs/Dhaka Tesla Pool ERD-selection.png](docs/Dhaka%20Tesla%20Pool%20ERD-selection.png)
 
 The ERD shows the target schema. The database grows one migration per phase, so today it
-holds `users`, `wallets`, `vehicles` (with online status and location), `pools`,
-`bookings` (with their lifecycle times), `booking_status_history`, `fares` and
+holds `users`, `wallets`, `wallet_transactions`, `vehicles` (with online status,
+location and seats), `pools`, `bookings` (with their lifecycle times),
+`booking_status_history`, `route_stops`, `fares`, `driver_penalties` and
 `distance_cache`.
 
 The browser talks only to the Next.js site. The site proxies `/api/v1/*` to the Express
@@ -266,6 +271,20 @@ Covered so far:
   (seats and route stay right, no deadlock); three drivers for one request (one wins); a
   double-tapped accept (one trip); five requests from one passenger (one booking). After
   each round, every trip's stops are checked against its bookings.
+- Wallet: top-ups, a repeated top-up adding once, amount and balance limits, drivers
+  refused; the history in cursor pages with no gaps or repeats; the database refusing to
+  edit or delete a ledger entry
+- Settlement: TeslaPay moving the fare from passenger to driver, Cash recorded as the
+  driver's earnings only, and Nusrat and Rafiq's pooled TeslaPay ride leaving ৳ 447.98,
+  ৳ 428.58 and ৳ 123.44
+- Fines: free within 3 minutes of acceptance and 30 tk after, for Cash and TeslaPay alike;
+  a fine taking a balance below zero, which blocks requests until a top-up
+- No-show: refused before 5 minutes, then cancelling, fining, freeing the seats and
+  re-planning a shared route; a repeat fining once
+- Driver penalties: none within 3 minutes, one record after, never a fine for the passenger
+- Money races, 25 rounds each: a double-tapped late cancel or complete, a passenger cancel
+  against a no-show, ten copies of one top-up, ten different top-ups, and settlements
+  beside top-ups. After each round every balance must equal its ledger.
 
 ## Demo credentials
 
@@ -279,8 +298,15 @@ Every seeded account uses the password **`TeslaPool#2026`**.
 | Shirin | shirin@teslapool.test | passenger | female |
 
 Sign in at http://localhost:3000/login. Jashim drives the Tesla "Bullet" (3 seats), which
-starts offline at Banani Road 11. Every wallet starts at ৳ 0.00; top-ups arrive with
-TeslaPay in phase 6, so ride requests use Cash until then.
+starts offline at Banani Road 11. The seed tops up the passengers' TeslaPay wallets, each
+through a ledger entry:
+
+| Name   | Starting balance | Why                                                          |
+| ------ | ---------------- | ------------------------------------------------------------ |
+| Nusrat | ৳ 500.00         | Pays the pooled ride by TeslaPay                             |
+| Rafiq  | ৳ 500.00         | Pays the pooled ride by TeslaPay                             |
+| Shirin | ৳ 20.00          | A 30 tk fine takes her below zero, which blocks new requests |
+| Jashim | ৳ 0.00           | Earns from rides                                             |
 
 To try a ride: sign in as Jashim and go online. In another browser, sign in as Nusrat,
 choose Banani Road 11 → Mohakhali, get the estimate and request the ride. Within a few
@@ -294,7 +320,21 @@ To see a pooled ride: with Jashim online at Banani Road 11, have Nusrat request 
 sees it under **Requests on your route**, adding 0.970 km. Accept it: the route lists
 Nusrat's pickup, Rafiq's pickup, Nusrat's drop-off, then Rafiq's, and only the next stop
 has a button. Take the steps in order. With no map key, Nusrat pays ৳ 52.02 and Rafiq
-৳ 71.42 ([worked out below](#pooling)), and each sees only their own fare.
+৳ 71.42 ([worked out below](#pooling)), and each sees only their own fare. Choose TeslaPay
+for both, and their wallets end at ৳ 447.98 and ৳ 428.58 while Jashim's reaches
+৳ 123.44.
+
+To see a late-cancel fine: have Shirin request a Cash ride and Jashim accept it. After
+3 minutes her screen says cancelling now costs ৳ 30.00. Cancel: she is fined, her balance
+goes from ৳ 20.00 to -৳ 10.00, and the request form asks her to top up first. Top up
+৳ 10.00 or more on the Wallet page and she can ride again. To skip the wait, move the
+acceptance back in the database:
+`docker compose exec db psql -U tesla -d tesla_pool -c "UPDATE bookings SET accepted_at = accepted_at - interval '3 minutes' WHERE status = 'ACCEPTED'"`.
+
+To see a no-show: accept a ride and tap **Arrived at pickup**. After 5 minutes a
+**No-show** button appears (or move `arrived_at` back the same way). It cancels the ride
+and fines the passenger ৳ 30.00. A driver who cancels more than 3 minutes after accepting
+is warned first, and a penalty is recorded against them.
 
 To see the last-seat race: with Jashim online at Banani Road 11, have Rafiq request 2 seats
 to Gulshan 1 and accept it. Bullet shows 2 of 3 seats taken. Then have Nusrat and Shirin
@@ -376,6 +416,21 @@ Arrive and complete return 409 `OUT_OF_STOP_ORDER` unless that passenger's stop 
 The fare breakdown gains `routeDistanceMethod`. Shapes and rules are in the
 [phase 5 LLD](docs/lld/phase-5-tesla-pooling.md#3-routes).
 
+TeslaPay and fines (phase 6), all under `/api/v1`:
+
+| Method | Route                          | Who       | Does                                                                             | Errors                                                                     |
+| ------ | ------------------------------ | --------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| GET    | `/wallet`                      | anyone    | The balance, as a string                                                         | —                                                                          |
+| GET    | `/wallet/transactions`         | anyone    | Every money movement, newest first, `?cursor=…&limit=…` (1–50, default 20)       | 400                                                                        |
+| POST   | `/wallet/top-ups`              | passenger | Adds `{ id, amount }` of pretend money. **201**; the same id again gives **200** | 400, 422 `BALANCE_LIMIT`                                                   |
+| POST   | `/driver/bookings/:id/no-show` | driver    | DRIVER_ARRIVED → CANCELLED 5 minutes after arriving; fines the passenger         | 404, 409 `INVALID_TRANSITION`, 409 `POOL_CHANGED`, 422 `NO_SHOW_TOO_EARLY` |
+
+Completing a ride now pays for it, and a passenger cancel more than 3 minutes after
+acceptance is fined. The booking body gains `cancelFine` and `fine`, each trip passenger
+gains `noShowFrom`, `canNoShow`, `penaltyFrom` and `cancelRecordsPenalty`, and the Tesla
+gains `penaltyCount`. Shapes and rules are in the
+[phase 6 LLD](docs/lld/phase-6-teslapay.md#3-routes).
+
 Every error has the same shape (NFR-35):
 
 ```json
@@ -442,6 +497,32 @@ left this to be checked once routing was built. Rather than loosen the rule, the
 quick pick moved to Wireless Gate (23.7812, 90.4090), where the road from Mohakhali to
 Gulshan 1 begins.
 
+## TeslaPay and fines
+
+**The ledger.** Every money movement is a row in `wallet_transactions`: a top-up, a fare
+payment, a driver credit, a cash earning or a fine, with its signed amount and the balance
+after it (FR-W8). A trigger refuses any `UPDATE` or `DELETE`, so mistakes are fixed by
+adding an entry (NFR-39). A wallet's balance always equals the sum of its entries, leaving
+out cash earnings: a Cash fare is paid in person, so it is recorded for the driver but
+never enters a wallet (FR-W5). One function, `postEntry` in
+[`services/wallet.ts`](apps/api/src/services/wallet.ts), moves every taka.
+
+**Paying for a ride.** Completing a TeslaPay ride takes the final fare from the passenger
+and credits it to the driver, in the transaction that records the fare (FR-W4, NFR-14).
+The fare payment can't take a balance below zero. It never needs to: the balance covered
+the estimate when the ride was requested (FR-W3), and the final fare never exceeds it.
+
+**Fines.** A passenger who cancels more than 3 minutes after a driver accepted, or whom the
+driver marks as a no-show 5 minutes after arriving, is fined 30 tk, whatever the payment
+method (FR-P7, FR-D11). A fine is the only thing that can take a balance below zero, and a
+negative balance blocks new requests until a top-up (FR-W6, FR-W7). Both windows are
+measured by the database clock (NFR-38). A driver who cancels more than 3 minutes after
+accepting gets a penalty record instead (FR-D13).
+
+**Double taps.** A ride is paid, credited or fined at most once: the state machine allows
+each change once, and a unique index on `(booking_id, type)` backs it up. A top-up carries
+an id made by the form, so a retry after a lost reply adds the money once (NFR-37).
+
 ## Concurrency
 
 The PRD's problem: Bullet has one seat left, and Nusrat and Shirin both try to claim it at
@@ -460,7 +541,7 @@ it holds with any number of API copies (NFR-19, NFR-20).
 | One driver per request (FR-C2)          | `UPDATE bookings … WHERE status = 'REQUESTED'`. The losing driver gets `ALREADY_CLAIMED`, and the rollback returns its seats.                                                                                                                                                                                                                                                                      |
 | Double taps (FR-C5, NFR-37)             | A repeated accept returns the same trip; a repeated request returns the same booking.                                                                                                                                                                                                                                                                                                              |
 | One active booking (FR-C6)              | A partial unique index on `bookings(passenger_id)` for unfinished states.                                                                                                                                                                                                                                                                                                                          |
-| No deadlocks (FR-C7)                    | Every transaction locks the Tesla, then the booking, then the trip. A passenger cancel finds its Tesla first and locks it before the booking, retrying if the booking changed Tesla in between.                                                                                                                                                                                                    |
+| No deadlocks (FR-C7)                    | Every transaction locks the Tesla, then the booking, then the trip, then any wallets. A passenger cancel finds its Tesla first and locks it before the booking, retrying if the booking changed Tesla in between. Settling a TeslaPay ride locks both wallets in one statement, in wallet-id order.                                                                                                |
 
 [`apps/api/test/concurrency.test.ts`](apps/api/test/concurrency.test.ts) fires each race
 with `Promise.all` against a real Postgres, 25 rounds each. After every round it checks
@@ -491,9 +572,15 @@ rarely taps that fast, and a retry succeeds.
   demo accounts, not secrets.
 - **Seat limit.** A Tesla has 1 to 6 passenger seats. The largest model, the Model X,
   seats 6 besides the driver.
-- **Wallets start empty.** Balances stay at ৳ 0.00 until the TeslaPay ledger exists
-  (phase 6), so every taka in a wallet is backed by a ledger entry (NFR-39). Until then a
-  TeslaPay request is refused with `INSUFFICIENT_BALANCE`.
+- **Demo balances.** The seed tops up Nusrat and Rafiq with ৳ 500.00 each and Shirin with
+  ৳ 20.00, through the ledger like any top-up, so every taka is backed by an entry
+  (NFR-39). New sign-ups start at ৳ 0.00.
+- **Top-up limits.** One top-up is ৳ 1.00 to ৳ 10,000.00, and a balance can't pass
+  ৳ 100,000.00. The brief sets none; these keep `DECIMAL(10,2)` far from overflowing.
+- **A late driver cancel.** It uses the passenger's 3 minutes: a driver cancel more than
+  3 minutes after accepting records a penalty.
+- **What a penalty does.** FR §13 left it open. Penalties are recorded and the driver sees
+  their count, but nothing else happens yet.
 - **Dhaka only.** Pickups, destinations and driver locations must fall inside a box from
   Uttara to Old Dhaka (latitude 23.65–23.95, longitude 90.30–90.55).
 - **Short trips.** Pickup and destination must be at least 100 m apart in a straight line.
@@ -531,10 +618,10 @@ the full list. Specific to the current state:
 - Map tiles come from the public OpenStreetMap servers, which suit a demo but not heavy use.
 - drizzle-kit, a dev-only tool, pulls in an old esbuild that `npm audit` flags. It never
   reaches the Docker images.
-- A late passenger cancel is recorded as `late_cancel` but not fined yet, and a late
-  driver cancel leaves no penalty record. Both need the wallet ledger (phase 6).
-- Completing a ride records the fare, but no money moves: cash is paid in person and the
-  ledger entries arrive in phase 6.
+- A driver penalty has no consequence yet. It is recorded and counted, and FR §13 leaves
+  what it should trigger to a later decision.
+- Top-ups are pretend money, and there are no refunds: a fine charged in error is fixed
+  by hand with a correcting ledger entry.
 - While the map service is failing, fallback distances aren't cached. The same 3 requests
   then ask it again on every refresh, and a fourth waits until it recovers.
 - A Tesla stays where its trip began until the driver moves it. It isn't moved to the last
