@@ -50,6 +50,13 @@
       "when": 1790325771222,
       "tag": "0006_create_pools",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790326576298,
+      "tag": "0007_create_fares",
+      "breakpoints": true
     }
   ]
 }
