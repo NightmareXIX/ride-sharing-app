@@ -4,6 +4,7 @@ import { useState, type ReactNode } from 'react';
 import { PAYMENT_METHOD_LABELS, RIDE_OPTION_LABELS, type Booking } from '@/lib/booking';
 import { formatTaka } from '@/lib/money';
 import { formatDhakaTime } from '@/lib/time';
+import { dangerButton, secondaryButton } from './buttons';
 
 function Detail({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -13,11 +14,6 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
     </div>
   );
 }
-
-const secondaryButton =
-  'rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:cursor-wait disabled:opacity-70';
-const dangerButton =
-  'rounded-lg bg-red-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-red-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 disabled:cursor-wait disabled:opacity-70';
 
 // Asks once before cancelling, so a stray tap can't drop the request.
 function CancelRequest({ onCancel }: { onCancel: () => Promise<void> }) {

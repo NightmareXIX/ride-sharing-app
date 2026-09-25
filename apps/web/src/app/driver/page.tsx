@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { AppShell, Card } from '@/components/AppShell';
+import { primaryButton, secondaryButton } from '@/components/buttons';
 import { FormAlert } from '@/components/forms';
 import { MapPicker, type MapMarker } from '@/components/MapPicker';
 import { QuickPicks } from '@/components/QuickPicks';
@@ -14,11 +15,6 @@ import { useAccount } from '@/lib/useAccount';
 import type { DriverVehicle } from '@/lib/vehicle';
 
 type Busy = 'availability' | 'location' | null;
-
-const primaryButton =
-  'rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:cursor-wait disabled:opacity-70';
-const secondaryButton =
-  'rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:cursor-wait disabled:opacity-70';
 
 function StatusPill({ online }: { online: boolean }) {
   return (
