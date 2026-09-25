@@ -32,6 +32,7 @@ import {
   type PlannedStop,
   type StopType,
 } from '../domain/route.js';
+import { type Rider } from '../domain/rideOptions.js';
 import { fitsFreeSeats } from '../domain/seats.js';
 import { FINE_AMOUNT } from '../domain/wallet.js';
 import type { DistanceMethod, DistanceService } from '../geo/distance.js';
@@ -151,6 +152,16 @@ export async function activePoolId(
     .from(pools)
     .where(and(eq(pools.vehicleId, vehicleId), eq(pools.status, 'active')));
   return pool?.id ?? null;
+}
+
+// The bookings in a trip that the ride-option rule counts: accepted, waited for or aboard
+// (FR-R10). Someone dropped off or cancelled no longer restricts who joins.
+export async function tripRiders(db: Database | Transaction, poolId: string): Promise<Rider[]> {
+  return db
+    .select({ rideOption: bookings.rideOption, gender: users.gender })
+    .from(bookings)
+    .innerJoin(users, eq(users.id, bookings.passengerId))
+    .where(and(eq(bookings.poolId, poolId), inArray(bookings.status, ASSIGNED_STATUSES)));
 }
 
 // The driver's current trip with every passenger and stop in it, or null (FR-D14).
