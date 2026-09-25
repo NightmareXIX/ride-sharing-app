@@ -42,6 +42,13 @@ export interface FareEstimate {
   estimatedFare: string;
 }
 
+// The fixed rates, as shown in every breakdown.
+export const FARE_RATES = {
+  baseFare: BASE_FARE.toFixed(2),
+  perKmRate: PER_KM_RATE.toFixed(2),
+  sharedKmDiscount: SHARED_KM_DISCOUNT.toFixed(2),
+} as const;
+
 // (30 + 20 × km − 8 × sharedKm) × seatMultiplier × optionMultiplier, not rounded yet.
 function unroundedFare(km: string, sharedKm: string, seatsFactor: Big, optionFactor: Big): Big {
   return BASE_FARE.plus(PER_KM_RATE.times(km))

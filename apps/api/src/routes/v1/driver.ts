@@ -1,6 +1,12 @@
 import { Router } from 'express';
 import { currentSession, requireAuth, requireRole } from '../../http/middleware/auth.js';
-import { acceptRequest, getDriverTrip } from '../../services/pools.js';
+import {
+  acceptRequest,
+  completeTrip,
+  getDriverTrip,
+  markArrived,
+  startTrip,
+} from '../../services/pools.js';
 import { listNearbyRequests } from '../../services/requests.js';
 import { getDriverVehicle, goOffline, goOnline, setLocation } from '../../services/vehicles.js';
 import type { V1Deps } from './index.js';
@@ -42,6 +48,23 @@ export function driverRouter({ db, session, dispatch }: V1Deps): Router {
   // The trip in progress, polled every 4 seconds (NFR-3).
   router.get('/pool', async (req, res) => {
     res.json({ pool: await getDriverTrip(db, currentSession(req).userId) });
+  });
+
+  // One passenger's ride, a step at a time (FR-D10). Each returns the trip after the step.
+  router.post('/bookings/:id/arrive', async (req, res) => {
+    const id = bookingId(req.params.id);
+    res.json({ pool: await markArrived(db, currentSession(req).userId, id) });
+  });
+
+  router.post('/bookings/:id/start', async (req, res) => {
+    const id = bookingId(req.params.id);
+    res.json({ pool: await startTrip(db, currentSession(req).userId, id) });
+  });
+
+  // Also returns the recorded fare for the driver to collect.
+  router.post('/bookings/:id/complete', async (req, res) => {
+    const id = bookingId(req.params.id);
+    res.json(await completeTrip(db, currentSession(req).userId, id));
   });
 
   return router;

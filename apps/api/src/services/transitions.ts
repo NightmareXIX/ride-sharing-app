@@ -20,7 +20,8 @@ export interface TransitionRequest {
 }
 
 export type TransitionOutcome =
-  | { ok: true }
+  // The booking's pool after the change, or the one it just left.
+  | { ok: true; poolId: string | null }
   // `current` is null when the booking doesn't exist or isn't the actor's to touch.
   | { ok: false; current: BookingStatus | null };
 
@@ -55,13 +56,14 @@ export async function transitionBooking(
   const [after] = updated;
   if (!after) throw new Error(`Booking ${bookingId} changed while locked`);
 
+  const poolId = after.poolId ?? locked.poolId;
   await tx.insert(bookingStatusHistory).values({
     bookingId,
     fromStatus: from,
     toStatus: to,
     actorId: actor.id,
     reason: request.reason,
-    poolId: after.poolId ?? locked.poolId,
+    poolId,
   });
-  return { ok: true };
+  return { ok: true, poolId };
 }
