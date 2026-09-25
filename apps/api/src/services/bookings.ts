@@ -1,20 +1,29 @@
 import Big from 'big.js';
 import { and, eq, max, notInArray, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import type { Database } from '../db/client.js';
 import { isUniqueViolation } from '../db/errors.js';
 import {
   bookings,
   bookingStatusHistory,
+  fares,
+  pools,
+  users,
   vehicles,
   wallets,
-  type Booking,
 } from '../db/schema/index.js';
-import { FINAL_STATUSES, type BookingStatus, type PaymentMethod } from '../domain/booking.js';
+import {
+  FINAL_STATUSES,
+  FREE_CANCEL_WINDOW,
+  type BookingStatus,
+  type PaymentMethod,
+} from '../domain/booking.js';
 import { estimateFare, type FareEstimate, type RideOption } from '../domain/fare.js';
 import type { DistanceMethod, DistanceService } from '../geo/distance.js';
 import type { LatLng } from '../geo/serviceArea.js';
 import { AppError } from '../http/errors.js';
 import type { Logger } from '../logger.js';
+import { fareColumns, toFareBreakdown, type FareBreakdown } from './fares.js';
 import { transitionBooking } from './transitions.js';
 
 export interface RideDeps {
@@ -41,8 +50,11 @@ export interface Quote extends FareEstimate {
   distanceMethod: DistanceMethod;
 }
 
-// What a passenger sees about their own booking. It never names or prices anyone else
-// (FR-P8, NFR-9).
+// Shown while the booking waits again because its driver cancelled (FR-D12).
+export type BookingNotice = 'driver_cancelled';
+
+// What a passenger sees about their own booking: their driver and Tesla once accepted,
+// and their fare once completed. It never names or prices another passenger (FR-P8, NFR-9).
 export interface BookingView {
   id: string;
   status: BookingStatus;
@@ -55,8 +67,30 @@ export interface BookingView {
   distanceMethod: DistanceMethod;
   estimatedFare: string;
   requestedAt: Date;
+  acceptedAt: Date | null;
+  arrivedAt: Date | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
   cancelledAt: Date | null;
+  // Until then, cancelling after acceptance is free (FR-P7). Set by the database clock.
+  freeCancelUntil: Date | null;
+  driver: { name: string } | null;
+  vehicle: { name: string } | null;
+  notice: BookingNotice | null;
+  fare: FareBreakdown | null;
 }
+
+const drivers = alias(users, 'drivers');
+
+// Why the booking last changed, from its history.
+const latestReason = sql<string | null>`(
+  SELECT ${bookingStatusHistory.reason} FROM ${bookingStatusHistory}
+  WHERE ${bookingStatusHistory.bookingId} = ${bookings.id}
+  ORDER BY ${bookingStatusHistory.createdAt} DESC, ${bookingStatusHistory.id} DESC
+  LIMIT 1
+)`;
+
+export const freeCancelWindow = sql.raw(`interval '${FREE_CANCEL_WINDOW}'`);
 
 const bookingColumns = {
   id: bookings.id,
@@ -74,23 +108,45 @@ const bookingColumns = {
   distanceMethod: bookings.distanceMethod,
   estimatedFare: bookings.estimatedFare,
   requestedAt: bookings.requestedAt,
+  acceptedAt: bookings.acceptedAt,
+  arrivedAt: bookings.arrivedAt,
+  startedAt: bookings.startedAt,
+  completedAt: bookings.completedAt,
   cancelledAt: bookings.cancelledAt,
+  freeCancelUntil: sql<Date | null>`${bookings.acceptedAt} + ${freeCancelWindow}`.mapWith(
+    bookings.acceptedAt,
+  ),
+  driverName: drivers.name,
+  vehicleName: vehicles.name,
+  latestReason,
+  fare: fareColumns,
 };
-
-type BookingRow = Pick<Booking, keyof typeof bookingColumns>;
-
-export function toBookingView(row: BookingRow): BookingView {
-  const { pickupLat, pickupLng, pickupLabel, destLat, destLng, destLabel, ...rest } = row;
-  return {
-    ...rest,
-    pickup: { lat: pickupLat, lng: pickupLng, label: pickupLabel },
-    destination: { lat: destLat, lng: destLng, label: destLabel },
-  };
-}
 
 // Selects the booking body, so every route returns the same shape.
 export function selectBooking(db: Database) {
-  return db.select(bookingColumns).from(bookings);
+  return db
+    .select(bookingColumns)
+    .from(bookings)
+    .leftJoin(pools, eq(pools.id, bookings.poolId))
+    .leftJoin(vehicles, eq(vehicles.id, pools.vehicleId))
+    .leftJoin(drivers, eq(drivers.id, vehicles.driverId))
+    .leftJoin(fares, eq(fares.bookingId, bookings.id));
+}
+
+type BookingRow = Awaited<ReturnType<typeof selectBooking>>[number];
+
+export function toBookingView(row: BookingRow): BookingView {
+  const { pickupLat, pickupLng, pickupLabel, destLat, destLng, destLabel, ...rest } = row;
+  const { driverName, vehicleName, latestReason: reason, fare, ...details } = rest;
+  return {
+    ...details,
+    pickup: { lat: pickupLat, lng: pickupLng, label: pickupLabel },
+    destination: { lat: destLat, lng: destLng, label: destLabel },
+    driver: driverName === null ? null : { name: driverName },
+    vehicle: vehicleName === null ? null : { name: vehicleName },
+    notice: row.status === 'REQUESTED' && reason === 'driver_cancel' ? 'driver_cancelled' : null,
+    fare: fare ? toFareBreakdown(fare) : null,
+  };
 }
 
 function notFound(): AppError {
@@ -238,7 +294,7 @@ export async function requestRide(
           distanceMethod: quote.distanceMethod,
           estimatedFare: quote.estimatedFare,
         })
-        .returning(bookingColumns);
+        .returning({ id: bookings.id });
       if (!row) throw new Error('Inserting the booking returned no row');
 
       await tx.insert(bookingStatusHistory).values({
@@ -248,9 +304,9 @@ export async function requestRide(
         actorId: passengerId,
         reason: 'requested',
       });
-      return toBookingView(row);
+      return row.id;
     });
-    return { booking, created: true };
+    return { booking: await getBooking(db, passengerId, booking), created: true };
   } catch (err) {
     // Another tap got there first. The unique index decides, not the lookup above.
     if (!isUniqueViolation(err, 'bookings_one_active_per_passenger')) throw err;

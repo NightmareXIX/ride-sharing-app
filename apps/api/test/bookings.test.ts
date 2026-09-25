@@ -144,7 +144,17 @@ describe('requesting a ride (FR-P3)', () => {
       distanceMethod: 'fallback',
       estimatedFare: expect.stringMatching(/^\d+\.\d{2}$/),
       requestedAt: expect.any(String),
+      acceptedAt: null,
+      arrivedAt: null,
+      startedAt: null,
+      completedAt: null,
       cancelledAt: null,
+      freeCancelUntil: null,
+      // No driver has it yet.
+      driver: null,
+      vehicle: null,
+      notice: null,
+      fare: null,
     });
     expect(await historyOf(booking.id)).toEqual([
       { from_status: null, to_status: 'REQUESTED', reason: 'requested' },
