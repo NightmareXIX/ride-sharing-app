@@ -3,6 +3,7 @@ import helmet from 'helmet';
 import type pg from 'pg';
 import type { SessionConfig } from './auth/session.js';
 import { createDb } from './db/client.js';
+import type { DispatchConfig } from './domain/dispatch.js';
 import { createDistanceService } from './geo/distance.js';
 import type { RoutingConfig } from './geo/openRouteService.js';
 import { errorHandler, notFoundHandler } from './http/middleware/errorHandler.js';
@@ -16,10 +17,11 @@ export interface AppDeps {
   pool: pg.Pool;
   session: SessionConfig;
   routing: RoutingConfig;
+  dispatch: DispatchConfig;
 }
 
 // Builds the Express app without listening, so tests can mount it on a random port.
-export function createApp({ logger, pool, session, routing }: AppDeps): Express {
+export function createApp({ logger, pool, session, routing, dispatch }: AppDeps): Express {
   const app = express();
 
   // Render and the Next.js proxy sit in front of the API.
@@ -30,7 +32,10 @@ export function createApp({ logger, pool, session, routing }: AppDeps): Express 
 
   app.use(healthRouter(pool));
   const db = createDb(pool);
-  app.use('/api/v1', v1Router({ db, session, distance: createDistanceService(db, routing) }));
+  app.use(
+    '/api/v1',
+    v1Router({ db, session, dispatch, distance: createDistanceService(db, routing) }),
+  );
 
   app.use(notFoundHandler);
   app.use(errorHandler);

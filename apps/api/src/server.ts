@@ -25,6 +25,7 @@ const app = createApp({
     baseUrl: config.ORS_BASE_URL,
     timeoutMs: ROUTING_TIMEOUT_MS,
   },
+  dispatch: { searchRadiusKm: config.DRIVER_SEARCH_RADIUS_KM },
 });
 if (!config.ORS_API_KEY) {
   logger.warn('ORS_API_KEY is not set; distances use the straight-line fallback');

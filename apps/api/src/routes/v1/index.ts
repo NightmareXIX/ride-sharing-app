@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { SessionConfig } from '../../auth/session.js';
 import type { Database } from '../../db/client.js';
+import type { DispatchConfig } from '../../domain/dispatch.js';
 import type { DistanceService } from '../../geo/distance.js';
 import { authRouter } from './auth.js';
 import { bookingsRouter } from './bookings.js';
@@ -12,6 +13,7 @@ export interface V1Deps {
   db: Database;
   session: SessionConfig;
   distance: DistanceService;
+  dispatch: DispatchConfig;
 }
 
 // Every product route is mounted under /api/v1 (NFR-34). Feature phases add their routers here.
