@@ -13,7 +13,7 @@ import {
 
 // The matching rule (FR-L3): whether a request can join a trip, and where its stops go.
 // Pure, so it is easy to test and explain (NFR-26). Seats (e) are claimed by the accept's
-// conditional update; solo and same-gender (f) arrive in phase 7.
+// conditional update; solo and same-gender (f) by `canJoin` in rideOptions.ts, before this.
 
 // Any detour adds at most this much to a passenger's ride (FR §2, FR-L3(c)).
 export const MAX_DETOUR_KM = '1.000';
