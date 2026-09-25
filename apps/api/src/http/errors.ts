@@ -23,7 +23,9 @@ export type ErrorCode =
   // Seats and concurrency (phase 4)
   | 'POOL_CHANGED'
   // Pooling (phase 5)
-  | 'OUT_OF_STOP_ORDER';
+  | 'OUT_OF_STOP_ORDER'
+  // TeslaPay and fines (phase 6)
+  | 'BALANCE_LIMIT';
 
 // Every error response has this shape (NFR-35).
 export interface ErrorBody {
