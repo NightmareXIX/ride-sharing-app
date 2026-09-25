@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { currentSession, requireAuth, requireRole } from '../../http/middleware/auth.js';
 import { parsePageQuery } from '../../http/pagination.js';
-import { getPastTrip, listDriverTrips } from '../../services/history.js';
+import { getEarnings, getPastTrip, listDriverTrips } from '../../services/history.js';
 import {
   acceptRequest,
   completeTrip,
@@ -98,6 +98,11 @@ export function driverRouter(deps: V1Deps): Router {
   router.get('/pools/:id', async (req, res) => {
     const id = poolId(req.params.id);
     res.json({ pool: await getPastTrip(db, currentSession(req).userId, id) });
+  });
+
+  // All-time totals, split into cash and TeslaPay (FR-D15).
+  router.get('/earnings', async (req, res) => {
+    res.json({ earnings: await getEarnings(db, currentSession(req).userId) });
   });
 
   return router;

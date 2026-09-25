@@ -9,6 +9,8 @@ import {
   pools,
   users,
   vehicles,
+  wallets,
+  walletTransactions,
 } from '../db/schema/index.js';
 import { FINAL_STATUSES, type PaymentMethod } from '../domain/booking.js';
 import type { RideOption } from '../domain/fare.js';
@@ -65,6 +67,11 @@ export interface PastTripBooking {
 export interface PastTrip extends TripSummary {
   vehicle: { name: string };
   bookings: PastTripBooking[];
+}
+
+// The driver's totals, from the ledger (FR-W8).
+export interface Earnings extends EarningsSplit {
+  rides: number;
 }
 
 function notFound(): AppError {
@@ -276,4 +283,30 @@ export async function getPastTrip(
   ].sort((a, b) => a.endedAt.getTime() - b.endedAt.getTime() || a.id.localeCompare(b.id));
 
   return { ...toTripSummary(trip), vehicle: { name: trip.vehicleName }, bookings: entries };
+}
+
+// The driver's earnings over all time, from the ledger: cash fares recorded as earnings,
+// and TeslaPay fares credited to the wallet (FR-W4, FR-W5, FR-W8). Fines and top-ups are
+// never earnings.
+export async function getEarnings(db: Database, driverId: string): Promise<Earnings> {
+  const amount = walletTransactions.amount;
+  const [row] = await db
+    .select({
+      total: money(sql`sum(${amount})`),
+      cash: money(sql`sum(${amount}) FILTER (WHERE ${walletTransactions.type} = 'cash_earning')`),
+      teslapay: money(
+        sql`sum(${amount}) FILTER (WHERE ${walletTransactions.type} = 'driver_credit')`,
+      ),
+      rides: sql<number>`count(*)`.mapWith(Number),
+    })
+    .from(walletTransactions)
+    .innerJoin(wallets, eq(wallets.id, walletTransactions.walletId))
+    .where(
+      and(
+        eq(wallets.userId, driverId),
+        inArray(walletTransactions.type, ['cash_earning', 'driver_credit']),
+      ),
+    );
+  if (!row) throw new Error('An aggregate returned no row');
+  return row;
 }
