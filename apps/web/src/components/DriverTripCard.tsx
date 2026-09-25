@@ -1,9 +1,15 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { PAYMENT_METHOD_LABELS, RIDE_OPTION_LABELS, type PaymentMethod } from '@/lib/booking';
+import {
+  FINE_AMOUNT,
+  PAYMENT_METHOD_LABELS,
+  RIDE_OPTION_LABELS,
+  type PaymentMethod,
+} from '@/lib/booking';
 import type { FareBreakdown as Fare } from '@/lib/fare';
 import { formatTaka } from '@/lib/money';
+import { formatDhakaTime } from '@/lib/time';
 import type { DriverTrip, NextAction, TripBooking, TripStop } from '@/lib/trip';
 import { primaryButton, secondaryButton } from './buttons';
 import { ConfirmAction } from './ConfirmAction';
@@ -89,6 +95,16 @@ function RouteStops({ stops }: { stops: TripStop[] }) {
   );
 }
 
+// A driver cancel before pickup is free for 3 minutes after accepting; later it records a
+// penalty against the driver (FR-D13).
+function cancelQuestion(booking: TripBooking): string {
+  const name = booking.passenger.name;
+  if (booking.cancelRecordsPenalty) {
+    return `Cancel ${name}'s ride? You accepted it more than 3 minutes ago, so this records a penalty against you. Their request goes back to other drivers.`;
+  }
+  return `Cancel ${name}'s ride? Their request goes back to other drivers. From ${formatDhakaTime(booking.penaltyFrom)}, cancelling records a penalty against you.`;
+}
+
 // One passenger in the Tesla: who they are, where they're going and how they pay (FR-D14).
 function Passenger({
   booking,
@@ -96,6 +112,7 @@ function Passenger({
   busy,
   onStep,
   onCancel,
+  onNoShow,
 }: {
   booking: TripBooking;
   // This passenger's step is running.
@@ -104,6 +121,7 @@ function Passenger({
   busy: boolean;
   onStep: (booking: TripBooking) => void;
   onCancel: (booking: TripBooking) => Promise<void>;
+  onNoShow: (booking: TripBooking) => Promise<void>;
 }) {
   const step = STEP_LABELS[booking.nextAction];
   return (
@@ -157,7 +175,7 @@ function Passenger({
         {booking.status !== 'STARTED' && (
           <ConfirmAction
             label="Cancel ride"
-            question={`Cancel ${booking.passenger.name}'s ride? Their request goes back to other drivers.`}
+            question={cancelQuestion(booking)}
             keepLabel="Keep the ride"
             confirmLabel="Yes, cancel it"
             pendingLabel="Cancelling…"
@@ -165,7 +183,25 @@ function Passenger({
             onConfirm={() => onCancel(booking)}
           />
         )}
+        {/* 5 minutes after arriving, a passenger who hasn't come can be let go (FR-D11). */}
+        {booking.status === 'DRIVER_ARRIVED' && booking.canNoShow && (
+          <ConfirmAction
+            label="No-show"
+            question={`Mark ${booking.passenger.name} as a no-show? Their ride is cancelled and they're fined ${formatTaka(FINE_AMOUNT)}.`}
+            keepLabel="Keep waiting"
+            confirmLabel="Yes, mark no-show"
+            pendingLabel="Saving…"
+            disabled={busy}
+            onConfirm={() => onNoShow(booking)}
+          />
+        )}
       </div>
+      {booking.status === 'DRIVER_ARRIVED' && !booking.canNoShow && booking.noShowFrom && (
+        <p className="mt-2 text-sm text-slate-500">
+          If {booking.passenger.name} doesn’t come, you can mark a no-show from{' '}
+          {formatDhakaTime(booking.noShowFrom)}.
+        </p>
+      )}
     </div>
   );
 }
@@ -176,12 +212,14 @@ export function DriverTripCard({
   pendingId,
   onStep,
   onCancel,
+  onNoShow,
 }: {
   trip: DriverTrip;
   // The booking whose action is running, if any.
   pendingId: string | null;
   onStep: (booking: TripBooking) => void;
   onCancel: (booking: TripBooking) => Promise<void>;
+  onNoShow: (booking: TripBooking) => Promise<void>;
 }) {
   return (
     <section
@@ -208,6 +246,7 @@ export function DriverTripCard({
               busy={pendingId !== null}
               onStep={onStep}
               onCancel={onCancel}
+              onNoShow={onNoShow}
             />
           </div>
         ))}

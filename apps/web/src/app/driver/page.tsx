@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppShell, Card } from '@/components/AppShell';
@@ -11,6 +12,7 @@ import { NearbyRequests } from '@/components/NearbyRequests';
 import { QuickPicks } from '@/components/QuickPicks';
 import { SeatMeter } from '@/components/SeatMeter';
 import type { Account } from '@/lib/account';
+import { FINE_AMOUNT } from '@/lib/booking';
 import { api, ApiError } from '@/lib/api';
 import type { LatLng } from '@/lib/geo';
 import { formatTaka } from '@/lib/money';
@@ -38,7 +40,14 @@ function StatusPill({ online }: { online: boolean }) {
   );
 }
 
-function DriverDashboard({ account }: { account: Account }) {
+// The balance changes when a TeslaPay ride is paid for, so the account is read again then.
+function DriverDashboard({
+  account,
+  onMoneyMoved,
+}: {
+  account: Account;
+  onMoneyMoved: () => Promise<void>;
+}) {
   const router = useRouter();
   const [vehicle, setVehicle] = useState<DriverVehicle | null>(null);
   const [trip, setTrip] = useState<DriverTrip | null>(null);
@@ -202,6 +211,7 @@ function DriverDashboard({ account }: { account: Account }) {
           fare: body.fare,
         });
         showTrip(body.pool);
+        if (booking.paymentMethod === 'teslapay') void onMoneyMoved();
       } else {
         const body = await api<{ pool: DriverTrip | null }>(path, { method: 'POST' });
         showTrip(body.pool);
@@ -222,7 +232,36 @@ function DriverDashboard({ account }: { account: Account }) {
         method: 'POST',
       });
       showTrip(body.pool);
-      setNotice(`You cancelled ${booking.passenger.name}'s ride. It's back with other drivers.`);
+      setNotice(
+        `You cancelled ${booking.passenger.name}'s ride. It's back with other drivers.${
+          booking.cancelRecordsPenalty ? ' A late-cancel penalty was recorded against you.' : ''
+        }`,
+      );
+      // The penalty count may have gone up (FR-D13).
+      if (booking.cancelRecordsPenalty) {
+        const latest = await api<{ vehicle: DriverVehicle }>('/driver/vehicle').catch(() => null);
+        if (latest) setVehicle(latest.vehicle);
+      }
+    } catch (err) {
+      setAlert((err as Error).message);
+    } finally {
+      setStepping(null);
+    }
+  }
+
+  // 5 minutes after arriving; the passenger is fined and the route goes on (FR-D11).
+  async function noShow(booking: TripBooking) {
+    setStepping(booking.id);
+    setAlert('');
+    try {
+      const body = await api<{ pool: DriverTrip | null }>(
+        `/driver/bookings/${booking.id}/no-show`,
+        { method: 'POST' },
+      );
+      showTrip(body.pool);
+      setNotice(
+        `${booking.passenger.name} was marked as a no-show and fined ${formatTaka(FINE_AMOUNT)}.`,
+      );
     } catch (err) {
       setAlert((err as Error).message);
     } finally {
@@ -304,7 +343,13 @@ function DriverDashboard({ account }: { account: Account }) {
       )}
       {completed && <CompletedRideCard ride={completed} onDismiss={() => setCompleted(null)} />}
       {trip && (
-        <DriverTripCard trip={trip} pendingId={stepping} onStep={step} onCancel={cancelRide} />
+        <DriverTripCard
+          trip={trip}
+          pendingId={stepping}
+          onStep={step}
+          onCancel={cancelRide}
+          onNoShow={noShow}
+        />
       )}
       {searching && (
         <NearbyRequests
@@ -365,6 +410,18 @@ function DriverDashboard({ account }: { account: Account }) {
           <p className="text-3xl font-semibold tabular-nums">
             {formatTaka(account.wallet.balance)}
           </p>
+          <Link
+            href="/driver/wallet"
+            className="mt-2 inline-block text-sm font-medium text-slate-700 underline underline-offset-2"
+          >
+            See your earnings
+          </Link>
+          {vehicle.penaltyCount > 0 && (
+            <p className="mt-3 text-sm text-amber-700">
+              {vehicle.penaltyCount} late {vehicle.penaltyCount === 1 ? 'cancel' : 'cancels'} on
+              your record.
+            </p>
+          )}
         </Card>
       </div>
 
@@ -426,14 +483,14 @@ function DriverDashboard({ account }: { account: Account }) {
 }
 
 export default function DriverHomePage() {
-  const { state, retry } = useAccount('driver');
+  const { state, retry, refresh } = useAccount('driver');
 
   return (
     <AppShell state={state} retry={retry}>
       {state.status === 'ready' && (
         <div className="space-y-4">
           <h1 className="text-2xl font-semibold tracking-tight">Hi, {state.account.user.name}</h1>
-          <DriverDashboard account={state.account} />
+          <DriverDashboard account={state.account} onMoneyMoved={refresh} />
         </div>
       )}
     </AppShell>

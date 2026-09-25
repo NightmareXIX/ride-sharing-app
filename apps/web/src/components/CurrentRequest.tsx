@@ -1,7 +1,12 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { PAYMENT_METHOD_LABELS, RIDE_OPTION_LABELS, type Booking } from '@/lib/booking';
+import {
+  FINE_AMOUNT,
+  PAYMENT_METHOD_LABELS,
+  RIDE_OPTION_LABELS,
+  type Booking,
+} from '@/lib/booking';
 import { formatTaka } from '@/lib/money';
 import { formatDhakaTime } from '@/lib/time';
 import { secondaryButton } from './buttons';
@@ -65,7 +70,17 @@ function cancelQuestion(booking: Booking): string {
   if (!booking.freeCancelUntil) {
     return 'Cancel this request? It’s free while no driver has accepted it.';
   }
+  if (booking.cancelFine) {
+    return `Cancel this ride? The free window has passed, so you’ll be fined ${formatTaka(booking.cancelFine)}, even if that takes your balance below zero.`;
+  }
   return `Cancel this ride? Cancelling is free until ${formatDhakaTime(booking.freeCancelUntil)}.`;
+}
+
+// What a late cancel or a no-show cost the passenger (FR-W6).
+function fineLine(fine: NonNullable<Booking['fine']>): string {
+  return fine.reason === 'no_show'
+    ? `You were marked as a no-show: a ${formatTaka(fine.amount)} fine was taken from your TeslaPay balance.`
+    : `Late-cancel fine: ${formatTaka(fine.amount)} was taken from your TeslaPay balance.`;
 }
 
 // The passenger's ride in progress. It shows only their own booking (FR-P8).
@@ -124,11 +139,18 @@ export function CurrentRequest({
           : `Requested ${formatDhakaTime(booking.requestedAt)}`}{' '}
         (Dhaka time)
       </p>
-      {booking.freeCancelUntil && cancellable && (
-        <p className="mt-1 text-sm text-slate-500">
-          Free cancellation until {formatDhakaTime(booking.freeCancelUntil)}
-        </p>
-      )}
+      {booking.freeCancelUntil &&
+        cancellable &&
+        (booking.cancelFine ? (
+          <p className="mt-1 text-sm font-medium text-amber-700">
+            Cancelling now costs a {formatTaka(booking.cancelFine)} fine.
+          </p>
+        ) : (
+          <p className="mt-1 text-sm text-slate-500">
+            Free cancellation until {formatDhakaTime(booking.freeCancelUntil)}, then a{' '}
+            {formatTaka(FINE_AMOUNT)} fine
+          </p>
+        ))}
       {connectionLost && (
         <p role="status" className="mt-3 text-sm text-amber-700">
           Can’t reach the server. Still trying…
@@ -163,6 +185,11 @@ export function FinishedRide({ booking, onDone }: { booking: Booking; onDone: ()
         {headline(booking)}
       </h2>
       <Route booking={booking} />
+      {booking.fine && (
+        <p className="mt-5 rounded-lg bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
+          {fineLine(booking.fine)}
+        </p>
+      )}
       {fare && (
         <>
           <p className="mt-5 text-xl font-semibold">
