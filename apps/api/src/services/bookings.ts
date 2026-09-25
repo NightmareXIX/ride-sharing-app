@@ -24,6 +24,7 @@ import type { LatLng } from '../geo/serviceArea.js';
 import { AppError } from '../http/errors.js';
 import type { Logger } from '../logger.js';
 import { fareColumns, toFareBreakdown, type FareBreakdown } from './fares.js';
+import { finishPoolIfDone } from './pools.js';
 import { transitionBooking } from './transitions.js';
 
 export interface RideDeps {
@@ -90,7 +91,7 @@ const latestReason = sql<string | null>`(
   LIMIT 1
 )`;
 
-export const freeCancelWindow = sql.raw(`interval '${FREE_CANCEL_WINDOW}'`);
+const freeCancelWindow = sql.raw(`interval '${FREE_CANCEL_WINDOW}'`);
 
 const bookingColumns = {
   id: bookings.id,
@@ -316,24 +317,38 @@ export async function requestRide(
   }
 }
 
-// A passenger cancels a request still waiting for a driver, for free (FR-P7). Pressing
-// Cancel twice is harmless (NFR-37). Cancelling after acceptance arrives in phase 3.
+// A passenger cancels any time before the trip starts (FR-P7). It is free while waiting
+// and for 3 minutes after acceptance; later it is recorded as a late cancel, measured by
+// the database clock (FR-R9, NFR-38). Phase 6 adds the fine. Pressing Cancel twice is
+// harmless (NFR-37).
 export async function cancelRide(
   db: Database,
   passengerId: string,
   bookingId: string,
 ): Promise<BookingView> {
-  const outcome = await db.transaction((tx) =>
-    transitionBooking(tx, {
+  const owner = eq(bookings.passengerId, passengerId);
+  const outcome = await db.transaction(async (tx) => {
+    const [timing] = await tx
+      .select({
+        late: sql<boolean>`coalesce(now() > ${bookings.acceptedAt} + ${freeCancelWindow}, false)`,
+      })
+      .from(bookings)
+      .where(and(eq(bookings.id, bookingId), owner))
+      .for('update');
+
+    const result = await transitionBooking(tx, {
       bookingId,
-      owner: eq(bookings.passengerId, passengerId),
-      from: ['REQUESTED'],
+      owner,
+      from: ['REQUESTED', 'ACCEPTED', 'DRIVER_ARRIVED'],
       to: 'CANCELLED',
       actor: { id: passengerId, role: 'passenger' },
-      reason: 'passenger_cancel',
+      reason: timing?.late ? 'late_cancel' : 'passenger_cancel',
       set: { cancelledAt: sql`now()` },
-    }),
-  );
+    });
+    // The driver's trip ends if this was its only passenger (FR-R7).
+    if (result.ok && result.poolId) await finishPoolIfDone(tx, result.poolId);
+    return result;
+  });
 
   if (outcome.ok || outcome.current === 'CANCELLED') {
     return getBooking(db, passengerId, bookingId);
@@ -344,6 +359,6 @@ export async function cancelRide(
     'INVALID_TRANSITION',
     outcome.current === 'COMPLETED'
       ? 'This ride has already finished.'
-      : 'This ride can no longer be cancelled.',
+      : 'Your ride has started, so it can no longer be cancelled.',
   );
 }
