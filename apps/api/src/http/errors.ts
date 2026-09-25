@@ -19,7 +19,9 @@ export type ErrorCode =
   | 'SEATS_UNAVAILABLE'
   | 'HAS_ACTIVE_BOOKINGS'
   | 'NO_LONGER_MATCHES'
-  | 'DRIVER_OFFLINE';
+  | 'DRIVER_OFFLINE'
+  // Seats and concurrency (phase 4)
+  | 'POOL_CHANGED';
 
 // Every error response has this shape (NFR-35).
 export interface ErrorBody {

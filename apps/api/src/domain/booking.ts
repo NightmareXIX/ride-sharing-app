@@ -21,6 +21,10 @@ export const ASSIGNED_STATUSES = [
 ] as const satisfies BookingStatus[];
 export type AssignedStatus = (typeof ASSIGNED_STATUSES)[number];
 
+export function isAssigned(status: BookingStatus): status is AssignedStatus {
+  return (ASSIGNED_STATUSES as readonly BookingStatus[]).includes(status);
+}
+
 // Why a status changed, as recorded in the history (FR-R11).
 export type TransitionReason =
   | 'requested'

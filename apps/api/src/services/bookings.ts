@@ -1,7 +1,7 @@
 import Big from 'big.js';
-import { and, eq, max, notInArray, sql } from 'drizzle-orm';
+import { and, eq, max, notInArray, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
-import type { Database } from '../db/client.js';
+import type { Database, Transaction } from '../db/client.js';
 import { isUniqueViolation } from '../db/errors.js';
 import {
   bookings,
@@ -15,6 +15,7 @@ import {
 import {
   FINAL_STATUSES,
   FREE_CANCEL_WINDOW,
+  isAssigned,
   type BookingStatus,
   type PaymentMethod,
 } from '../domain/booking.js';
@@ -24,7 +25,7 @@ import type { LatLng } from '../geo/serviceArea.js';
 import { AppError } from '../http/errors.js';
 import type { Logger } from '../logger.js';
 import { fareColumns, toFareBreakdown, type FareBreakdown } from './fares.js';
-import { finishPoolIfDone } from './pools.js';
+import { finishPoolIfDone, releaseSeats } from './pools.js';
 import { transitionBooking } from './transitions.js';
 
 export interface RideDeps {
@@ -317,6 +318,20 @@ export async function requestRide(
   }
 }
 
+// The Tesla carrying the booking now, if a driver has it.
+async function teslaOf(tx: Transaction, bookingId: string, owner: SQL): Promise<string | null> {
+  const [row] = await tx
+    .select({ vehicleId: pools.vehicleId })
+    .from(bookings)
+    .innerJoin(pools, eq(pools.id, bookings.poolId))
+    .where(and(eq(bookings.id, bookingId), owner));
+  return row?.vehicleId ?? null;
+}
+
+// A booking can change Tesla between finding it and locking it only if a driver hands it
+// back and another accepts it at that moment; trying again is enough.
+const CANCEL_ATTEMPTS = 3;
+
 // A passenger cancels any time before the trip starts (FR-P7). It is free while waiting
 // and for 3 minutes after acceptance; later it is recorded as a late cancel, measured by
 // the database clock (FR-R9, NFR-38). Phase 6 adds the fine. Pressing Cancel twice is
@@ -327,28 +342,51 @@ export async function cancelRide(
   bookingId: string,
 ): Promise<BookingView> {
   const owner = eq(bookings.passengerId, passengerId);
-  const outcome = await db.transaction(async (tx) => {
-    const [timing] = await tx
-      .select({
-        late: sql<boolean>`coalesce(now() > ${bookings.acceptedAt} + ${freeCancelWindow}, false)`,
-      })
-      .from(bookings)
-      .where(and(eq(bookings.id, bookingId), owner))
-      .for('update');
+  const cancelOnce = () =>
+    db.transaction(async (tx) => {
+      // The Tesla is locked before the booking, the order every driver action uses, so a
+      // cancel and a driver action can't deadlock (FR-C7).
+      const vehicleId = await teslaOf(tx, bookingId, owner);
+      if (vehicleId) {
+        await tx
+          .select({ id: vehicles.id })
+          .from(vehicles)
+          .where(eq(vehicles.id, vehicleId))
+          .for('update');
+      }
 
-    const result = await transitionBooking(tx, {
-      bookingId,
-      owner,
-      from: ['REQUESTED', 'ACCEPTED', 'DRIVER_ARRIVED'],
-      to: 'CANCELLED',
-      actor: { id: passengerId, role: 'passenger' },
-      reason: timing?.late ? 'late_cancel' : 'passenger_cancel',
-      set: { cancelledAt: sql`now()` },
+      const [timing] = await tx
+        .select({
+          late: sql<boolean>`coalesce(now() > ${bookings.acceptedAt} + ${freeCancelWindow}, false)`,
+        })
+        .from(bookings)
+        .where(and(eq(bookings.id, bookingId), owner))
+        .for('update');
+      const holder = await teslaOf(tx, bookingId, owner);
+      if (holder !== null && holder !== vehicleId) return 'moved' as const;
+
+      const result = await transitionBooking(tx, {
+        bookingId,
+        owner,
+        from: ['REQUESTED', 'ACCEPTED', 'DRIVER_ARRIVED'],
+        to: 'CANCELLED',
+        actor: { id: passengerId, role: 'passenger' },
+        reason: timing?.late ? 'late_cancel' : 'passenger_cancel',
+        set: { cancelledAt: sql`now()` },
+      });
+      if (result.ok && holder !== null && isAssigned(result.from)) {
+        await releaseSeats(tx, holder, result.seats);
+      }
+      // The driver's trip ends if this was its only passenger (FR-R7).
+      if (result.ok && result.poolId) await finishPoolIfDone(tx, result.poolId);
+      return result;
     });
-    // The driver's trip ends if this was its only passenger (FR-R7).
-    if (result.ok && result.poolId) await finishPoolIfDone(tx, result.poolId);
-    return result;
-  });
+
+  let outcome = await cancelOnce();
+  for (let attempt = 1; outcome === 'moved' && attempt < CANCEL_ATTEMPTS; attempt += 1) {
+    outcome = await cancelOnce();
+  }
+  if (outcome === 'moved') throw new Error(`Booking ${bookingId} kept changing Tesla`);
 
   if (outcome.ok || outcome.current === 'CANCELLED') {
     return getBooking(db, passengerId, bookingId);

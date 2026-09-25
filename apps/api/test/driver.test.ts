@@ -53,13 +53,14 @@ async function vehicleOf(res: Response) {
 }
 
 describe('driver Tesla (FR-D3, FR-D4)', () => {
-  it('starts offline with no location', async () => {
+  it('starts offline with no location and no seats taken', async () => {
     const vehicle = await vehicleOf(await getJson(server, '/api/v1/driver/vehicle', driver));
 
     expect(vehicle).toEqual({
       id: expect.any(String),
       name: 'Bullet',
       capacity: 3,
+      occupiedSeats: 0,
       isOnline: false,
       location: null,
     });

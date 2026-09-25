@@ -20,8 +20,9 @@ export interface TransitionRequest {
 }
 
 export type TransitionOutcome =
-  // The booking's pool after the change, or the one it just left.
-  | { ok: true; poolId: string | null }
+  // The booking's pool after the change, or the one it just left. `from` is the state it
+  // left and `seats` its seat count, so callers know whether it gave seats back.
+  | { ok: true; poolId: string | null; from: BookingStatus; seats: number }
   // `current` is null when the booking doesn't exist or isn't the actor's to touch.
   | { ok: false; current: BookingStatus | null };
 
@@ -35,7 +36,7 @@ export async function transitionBooking(
 ): Promise<TransitionOutcome> {
   const { bookingId, to, actor } = request;
   const [locked] = await tx
-    .select({ status: bookings.status, poolId: bookings.poolId })
+    .select({ status: bookings.status, poolId: bookings.poolId, seats: bookings.seats })
     .from(bookings)
     .where(and(eq(bookings.id, bookingId), request.owner))
     .for('update');
@@ -65,5 +66,5 @@ export async function transitionBooking(
     reason: request.reason,
     poolId,
   });
-  return { ok: true, poolId };
+  return { ok: true, poolId, from, seats: locked.seats };
 }
