@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppShell, Card } from '@/components/AppShell';
 import { primaryButton, secondaryButton } from '@/components/buttons';
-import { DriverTripCard } from '@/components/DriverTripCard';
+import { CompletedRideCard, DriverTripCard, type CompletedRide } from '@/components/DriverTripCard';
 import { FormAlert } from '@/components/forms';
 import { MapPicker, type MapMarker } from '@/components/MapPicker';
 import { NearbyRequests } from '@/components/NearbyRequests';
@@ -14,7 +14,7 @@ import { api, ApiError } from '@/lib/api';
 import type { LatLng } from '@/lib/geo';
 import { formatTaka } from '@/lib/money';
 import { describePoint } from '@/lib/places';
-import type { DriverTrip, NearbyRequest } from '@/lib/trip';
+import type { CompletedTrip, DriverTrip, NearbyRequest, TripBooking } from '@/lib/trip';
 import { useAccount } from '@/lib/useAccount';
 import { usePolling } from '@/lib/usePolling';
 import type { DriverVehicle } from '@/lib/vehicle';
@@ -48,6 +48,10 @@ function DriverDashboard({ account }: { account: Account }) {
   const [draft, setDraft] = useState<LatLng | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
   const [accepting, setAccepting] = useState<string | null>(null);
+  // The passenger whose trip action is running.
+  const [stepping, setStepping] = useState<string | null>(null);
+  const [completed, setCompleted] = useState<CompletedRide | null>(null);
+  const [notice, setNotice] = useState('');
   const [alert, setAlert] = useState('');
   const [connectionLost, setConnectionLost] = useState(false);
   // Bumped by every trip change made here, so a poll that started before it can't undo it.
@@ -112,6 +116,7 @@ function DriverDashboard({ account }: { account: Account }) {
     try {
       const body = await api<{ pool: DriverTrip | null }>('/driver/pool');
       if (tripChanges.current !== startedAt) return;
+      if (!body.pool) setNotice('Your passenger cancelled the ride.');
       setTrip(body.pool);
       setConnectionLost(false);
     } catch (err) {
@@ -152,6 +157,8 @@ function DriverDashboard({ account }: { account: Account }) {
   async function accept(request: NearbyRequest) {
     setAccepting(request.id);
     setAlert('');
+    setNotice('');
+    setCompleted(null);
     try {
       const body = await api<{ pool: DriverTrip | null }>(`/driver/requests/${request.id}/accept`, {
         method: 'POST',
@@ -163,6 +170,49 @@ function DriverDashboard({ account }: { account: Account }) {
       void refreshRequests();
     } finally {
       setAccepting(null);
+    }
+  }
+
+  // Moves one passenger a step: arrived, started, then dropped off (FR-D10).
+  async function step(booking: TripBooking) {
+    const action = booking.nextAction;
+    setStepping(booking.id);
+    setAlert('');
+    try {
+      const path = `/driver/bookings/${booking.id}/${action}`;
+      if (action === 'complete') {
+        const body = await api<CompletedTrip>(path, { method: 'POST' });
+        setCompleted({
+          passengerName: booking.passenger.name,
+          paymentMethod: booking.paymentMethod,
+          fare: body.fare,
+        });
+        showTrip(body.pool);
+      } else {
+        const body = await api<{ pool: DriverTrip | null }>(path, { method: 'POST' });
+        showTrip(body.pool);
+      }
+    } catch (err) {
+      setAlert((err as Error).message);
+    } finally {
+      setStepping(null);
+    }
+  }
+
+  // Before pickup only; the request goes back to other drivers (FR-D12).
+  async function cancelRide(booking: TripBooking) {
+    setStepping(booking.id);
+    setAlert('');
+    try {
+      const body = await api<{ pool: DriverTrip | null }>(`/driver/bookings/${booking.id}/cancel`, {
+        method: 'POST',
+      });
+      showTrip(body.pool);
+      setNotice(`You cancelled ${booking.passenger.name}'s ride. It's back with other drivers.`);
+    } catch (err) {
+      setAlert((err as Error).message);
+    } finally {
+      setStepping(null);
     }
   }
 
@@ -226,7 +276,15 @@ function DriverDashboard({ account }: { account: Account }) {
         </p>
       )}
 
-      {trip && <DriverTripCard trip={trip} />}
+      {notice && !trip && (
+        <p role="status" className="rounded-lg bg-slate-100 px-3 py-2.5 text-sm text-slate-700">
+          {notice}
+        </p>
+      )}
+      {completed && <CompletedRideCard ride={completed} onDismiss={() => setCompleted(null)} />}
+      {trip && (
+        <DriverTripCard trip={trip} pendingId={stepping} onStep={step} onCancel={cancelRide} />
+      )}
       {searching && <NearbyRequests requests={requests} accepting={accepting} onAccept={accept} />}
       {!vehicle.isOnline && (
         <p className="rounded-xl border border-dashed border-slate-300 p-5 text-slate-600">
