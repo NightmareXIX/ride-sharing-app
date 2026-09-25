@@ -3,7 +3,7 @@ import { eq, sql } from 'drizzle-orm';
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Database } from '../src/db/client.js';
-import { users, vehicles, wallets } from '../src/db/schema/index.js';
+import { users, vehicles, wallets, walletTransactions } from '../src/db/schema/index.js';
 import { DEMO_PASSWORD, seedStoryCast, STORY_VEHICLE } from '../src/db/seeder.js';
 import { TEST_DATABASE_URL } from './support/db.js';
 
@@ -48,9 +48,11 @@ describe('story cast seed (FR-S1, NFR-31)', () => {
     expect(await db.$count(users)).toBe(4);
     expect(await db.$count(wallets)).toBe(4);
     expect(await db.$count(vehicles)).toBe(1);
+    expect(await db.$count(walletTransactions)).toBe(3);
   });
 
-  it('gives every cast member an empty wallet (FR-W1)', async () => {
+  it('tops up the passengers for the demo, through the ledger (FR-S3, NFR-39)', async () => {
+    await seedStoryCast(db);
     await seedStoryCast(db);
 
     const rows = await db
@@ -58,9 +60,40 @@ describe('story cast seed (FR-S1, NFR-31)', () => {
       .from(wallets)
       .innerJoin(users, eq(users.id, wallets.userId))
       .orderBy(users.name);
-    expect(rows).toEqual(
-      ['Jashim', 'Nusrat', 'Rafiq', 'Shirin'].map((name) => ({ name, balance: '0.00' })),
+    expect(rows).toEqual([
+      { name: 'Jashim', balance: '0.00' },
+      { name: 'Nusrat', balance: '500.00' },
+      { name: 'Rafiq', balance: '500.00' },
+      { name: 'Shirin', balance: '20.00' },
+    ]);
+
+    const entries = await db
+      .select({
+        name: users.name,
+        type: walletTransactions.type,
+        amount: walletTransactions.amount,
+        balanceAfter: walletTransactions.balanceAfter,
+      })
+      .from(walletTransactions)
+      .innerJoin(wallets, eq(wallets.id, walletTransactions.walletId))
+      .innerJoin(users, eq(users.id, wallets.userId))
+      .orderBy(users.name);
+    expect(entries).toEqual([
+      { name: 'Nusrat', type: 'top_up', amount: '500.00', balanceAfter: '500.00' },
+      { name: 'Rafiq', type: 'top_up', amount: '500.00', balanceAfter: '500.00' },
+      { name: 'Shirin', type: 'top_up', amount: '20.00', balanceAfter: '20.00' },
+    ]);
+  });
+
+  it("doesn't top up again once the money has been spent", async () => {
+    await seedStoryCast(db);
+    await db.execute(
+      sql`UPDATE ${wallets} SET balance = 0 FROM ${users}
+          WHERE ${users.id} = ${wallets.userId} AND ${users.email} = 'shirin@teslapool.test'`,
     );
+
+    await seedStoryCast(db);
+    expect(await db.$count(walletTransactions)).toBe(3);
   });
 
   it("registers Bullet, with 3 seats, as Jashim's Tesla", async () => {
