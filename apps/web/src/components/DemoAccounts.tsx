@@ -85,8 +85,6 @@ export function DemoAccounts({ compact = false }: { compact?: boolean }) {
       )}
       <p className="text-sm text-slate-500">
         One account per browser: open a private window to play the driver and a passenger at once.
-        Every demo account uses the password{' '}
-        <code className="rounded bg-slate-100 px-1 py-0.5 text-slate-700">{DEMO_PASSWORD}</code>.
       </p>
     </div>
   );
