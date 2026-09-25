@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { MAX_VEHICLE_CAPACITY } from '../../db/schema/index.js';
 import { RIDE_OPTIONS } from '../../domain/fare.js';
+import { AppError } from '../../http/errors.js';
 import { haversineKm } from '../../geo/haversine.js';
 import { SERVICE_AREA } from '../../geo/serviceArea.js';
 
@@ -33,7 +34,15 @@ export const place = location.extend({
 });
 
 // Route ids that aren't UUIDs can't match anything, so they are simply not found.
-export const uuidParam = z.uuid();
+const uuidParam = z.uuid();
+
+// A booking id from the path. One that isn't a UUID can't be anyone's booking, so it is
+// not found rather than invalid (NFR-8).
+export function bookingId(raw: string): string {
+  const parsed = uuidParam.safeParse(raw);
+  if (!parsed.success) throw new AppError(404, 'NOT_FOUND', 'This ride was not found.');
+  return parsed.data;
+}
 
 // Pickup and destination this close together aren't a ride.
 export const MIN_TRIP_KM = 0.1;

@@ -1,22 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { PAYMENT_METHODS } from '../../domain/booking.js';
-import { AppError } from '../../http/errors.js';
 import { currentSession, requireAuth, requireRole } from '../../http/middleware/auth.js';
 import { cancelRide, getBooking, getCurrentBooking, requestRide } from '../../services/bookings.js';
 import type { V1Deps } from './index.js';
-import { trip, uuidParam } from './schemas.js';
+import { bookingId, trip } from './schemas.js';
 
 const rideRequest = trip.and(
   z.object({ paymentMethod: z.enum(PAYMENT_METHODS, 'must be cash or teslapay') }),
 );
-
-// An id that isn't a UUID can't be anyone's booking, so it is simply not found.
-function bookingId(raw: string): string {
-  const parsed = uuidParam.safeParse(raw);
-  if (!parsed.success) throw new AppError(404, 'NOT_FOUND', 'This ride was not found.');
-  return parsed.data;
-}
 
 // A passenger's own ride requests (API Routes §5). Passengers only (NFR-8).
 export function bookingsRouter(deps: V1Deps): Router {
