@@ -67,7 +67,7 @@ export function driverAction(
   server: TestServer,
   driver: string,
   bookingId: string,
-  action: 'arrive' | 'start' | 'complete' | 'cancel',
+  action: 'arrive' | 'start' | 'complete' | 'cancel' | 'no-show',
 ) {
   return postJson(server, `/api/v1/driver/bookings/${bookingId}/${action}`, {}, driver);
 }
@@ -106,10 +106,28 @@ export async function expectSeatsMatchBookings(pool: pg.Pool): Promise<void> {
 }
 
 // Clears every ride but keeps the accounts, so a race can run many rounds without new
-// sign-ups. TRUNCATE doesn't fire the append-only row triggers.
+// sign-ups. TRUNCATE doesn't fire the append-only row triggers. The cascade empties the
+// wallet ledger too, so every balance goes back to zero with it.
 export async function resetRides(pool: pg.Pool): Promise<void> {
-  await pool.query('TRUNCATE bookings, pools CASCADE');
+  await pool.query('TRUNCATE bookings, pools, wallet_transactions CASCADE');
   await pool.query('UPDATE vehicles SET occupied_seats = 0');
+  await pool.query('UPDATE wallets SET balance = 0');
+}
+
+// Only the database clock counts for the 3-minute and 5-minute windows (NFR-38), so tests
+// move a booking's acceptance or arrival back in SQL, e.g. by '3 minutes 1 second'.
+export async function ageAcceptance(pool: pg.Pool, bookingId: string, by: string): Promise<void> {
+  await pool.query('UPDATE bookings SET accepted_at = accepted_at - $2::interval WHERE id = $1', [
+    bookingId,
+    by,
+  ]);
+}
+
+export async function ageArrival(pool: pg.Pool, bookingId: string, by: string): Promise<void> {
+  await pool.query('UPDATE bookings SET arrived_at = arrived_at - $2::interval WHERE id = $1', [
+    bookingId,
+    by,
+  ]);
 }
 
 // Every trip's route matches its bookings (phase 5 LLD §4): each booking with the driver
