@@ -39,7 +39,8 @@ export function bookingsRouter(deps: V1Deps): Router {
   });
 
   router.post('/:id/cancel', async (req, res) => {
-    const booking = await cancelRide(db, currentSession(req).userId, bookingId(req.params.id));
+    const id = bookingId(req.params.id);
+    const booking = await cancelRide(deps, req.log, currentSession(req).userId, id);
     res.json({ booking });
   });
 

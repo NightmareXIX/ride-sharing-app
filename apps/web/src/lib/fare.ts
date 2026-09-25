@@ -8,7 +8,10 @@ export interface FareBreakdown {
   actualKm: string;
   sharedKm: string;
   directKm: string;
+  // How the direct km, and so the estimate, was measured.
   distanceMethod: DistanceMethod;
+  // How the ride's own legs were measured.
+  routeDistanceMethod: DistanceMethod;
   baseFare: string;
   perKmRate: string;
   sharedKmDiscount: string;

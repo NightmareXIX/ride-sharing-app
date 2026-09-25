@@ -13,8 +13,10 @@ export interface NearbyRequest {
   directKm: string;
   estimatedFare: string;
   requestedAt: string;
-  // Straight-line km from the driver's Tesla.
+  // Straight-line km from the driver's Tesla, or from where its route goes on.
   pickupDistanceKm: string;
+  // How much longer the route gets with this request in it; null for an idle Tesla.
+  addedKm: string | null;
 }
 
 export type NextAction = 'arrive' | 'start' | 'complete';
@@ -35,6 +37,23 @@ export interface TripBooking {
   arrivedAt: string | null;
   startedAt: string | null;
   nextAction: NextAction;
+  // The next action happens at the next stop, so it can be taken now.
+  canAct: boolean;
+}
+
+// One stop on the driver's route, in order.
+export interface TripStop {
+  id: string;
+  bookingId: string;
+  passenger: { name: string };
+  type: 'pickup' | 'dropoff';
+  place: Place;
+  sequence: number;
+  plannedOdometerKm: string;
+  // The reading, once the stop is reached.
+  actualOdometerKm: string | null;
+  reachedAt: string | null;
+  isNext: boolean;
 }
 
 // The body of GET /driver/pool and every trip action, with the Tesla's seats as they stand.
@@ -42,6 +61,9 @@ export interface DriverTrip {
   id: string;
   createdAt: string;
   seats: { capacity: number; taken: number };
+  // Km along the trip where the route goes on from.
+  odometerKm: string;
+  stops: TripStop[];
   bookings: TripBooking[];
 }
 

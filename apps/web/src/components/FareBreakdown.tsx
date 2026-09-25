@@ -41,7 +41,7 @@ export function FareBreakdown({ fare }: { fare: Fare }) {
         ({fare.baseFare} + {fare.perKmRate} × {fare.actualKm}
         {shared && ` − ${fare.sharedKmDiscount} × ${fare.sharedKm}`}) × {fare.seatMultiplier} ×{' '}
         {fare.optionMultiplier} = {fare.computedFare}. You pay the lower of this and the estimate.
-        {fare.distanceMethod === 'fallback' &&
+        {(fare.distanceMethod === 'fallback' || fare.routeDistanceMethod === 'fallback') &&
           ' Distances are approximate: the map service was unavailable.'}
       </p>
     </div>

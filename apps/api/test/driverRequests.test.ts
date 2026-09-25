@@ -75,9 +75,9 @@ describe('GET /driver/requests (FR-D5, FR-D6)', () => {
       paymentMethod: 'cash',
       estimatedFare: booking.estimatedFare,
     });
-    // Mohakhali is about 1.7 km from Banani Road 11 in a straight line.
-    expect(Number(request?.pickupDistanceKm)).toBeGreaterThan(1.5);
-    expect(Number(request?.pickupDistanceKm)).toBeLessThan(2);
+    // Mohakhali is about 1.4 km from Banani Road 11 in a straight line.
+    expect(Number(request?.pickupDistanceKm)).toBeGreaterThan(1.3);
+    expect(Number(request?.pickupDistanceKm)).toBeLessThan(1.5);
     // A driver sees where, never who, before accepting (NFR-9).
     expect(JSON.stringify(request)).not.toContain('Nusrat');
     expect(request).not.toHaveProperty('passengerId');

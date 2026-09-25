@@ -51,3 +51,53 @@ export async function drivingMeters(
   }
   return { ok: true, meters };
 }
+
+// `meters[i][j]` is the drive from point i to point j, or null where ORS found no route.
+export type MatrixResult =
+  { ok: true; meters: (number | null)[][] } | { ok: false; reason: string };
+
+interface MatrixBody {
+  distances?: unknown;
+}
+
+function isRoadMeters(value: unknown): value is number | null {
+  return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+}
+
+// Asks OpenRouteService for the driving distance between every pair of points, in one
+// request. A route check needs many pairs; asking for each would soon use up the free
+// quota and miss the 4-second target (NFR-2). Failures come back as reasons, as above.
+export async function drivingMatrix(
+  config: RoutingConfig,
+  points: readonly LatLng[],
+): Promise<MatrixResult> {
+  if (!config.apiKey) return { ok: false, reason: 'no_api_key' };
+
+  let body: MatrixBody;
+  try {
+    const res = await fetch(new URL('/v2/matrix/driving-car', config.baseUrl), {
+      method: 'POST',
+      headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        locations: points.map((point) => [point.lng, point.lat]),
+        metrics: ['distance'],
+      }),
+      signal: AbortSignal.timeout(config.timeoutMs),
+    });
+    if (!res.ok) return { ok: false, reason: `http_${res.status}` };
+    body = (await res.json()) as MatrixBody;
+  } catch (err) {
+    const timedOut = err instanceof Error && err.name === 'TimeoutError';
+    return { ok: false, reason: timedOut ? 'timeout' : 'network_error' };
+  }
+
+  const rows = body.distances;
+  const wellFormed =
+    Array.isArray(rows) &&
+    rows.length === points.length &&
+    rows.every(
+      (row) => Array.isArray(row) && row.length === points.length && row.every(isRoadMeters),
+    );
+  if (!wellFormed) return { ok: false, reason: 'malformed_response' };
+  return { ok: true, meters: rows as (number | null)[][] };
+}

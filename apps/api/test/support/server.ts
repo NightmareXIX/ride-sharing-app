@@ -16,7 +16,7 @@ export interface TestServer {
 
 // No key by default, so distances use the fallback and tests never call the real map
 // service (NFR-28). Tests of the routing path point baseUrl at a local stub instead.
-const NO_ROUTING: RoutingConfig = { baseUrl: 'http://127.0.0.1:1', timeoutMs: 1_000 };
+export const NO_ROUTING: RoutingConfig = { baseUrl: 'http://127.0.0.1:1', timeoutMs: 1_000 };
 
 // The default radius from FR §2.
 const DEFAULT_DISPATCH: DispatchConfig = { searchRadiusKm: 2 };

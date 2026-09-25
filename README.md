@@ -27,6 +27,7 @@ The Tesla never carries more people than it has seats, and every passenger pays 
 - [Tests and checks](#tests-and-checks)
 - [Demo credentials](#demo-credentials)
 - [API overview](#api-overview)
+- [Pooling](#pooling)
 - [Concurrency](#concurrency)
 - [Assumptions](#assumptions)
 - [Known limitations](#known-limitations)
@@ -234,9 +235,9 @@ Covered so far:
   let anyone edit or delete
 - Nearby requests: hidden from offline drivers and full Teslas, and outside the search
   radius or the free seats; oldest first; never naming the passenger
-- Accept: opens a trip with its history row, or joins the one running while seats are
-  free; a repeat returns the same trip; a second driver gets `ALREADY_CLAIMED`; offline and
-  out-of-range accepts refused
+- Accept: opens a trip with its history row, or joins the one running when it fits the
+  route and the free seats; a repeat returns the same trip; a second driver gets
+  `ALREADY_CLAIMED`; offline and out-of-range accepts refused
 - Trip steps: arrive, start and complete in order, each repeat harmless, skipped steps
   refused, another driver's passenger 404
 - Final fare: the FR §8 pooled examples (116.00, 174.00, 182.70), capped at the estimate,
@@ -249,10 +250,22 @@ Covered so far:
 - Seat limit: Bullet fills seat by seat and then refuses; every way out of a trip frees
   its seats once; raw SQL can't overfill a Tesla; an accept against an out-of-date Tesla
   gets `POOL_CHANGED`; co-passengers never see each other
+- Matching rule (FR-L3): each reason a request is turned away, the pickup the driver waits
+  at staying first, the shortest route winning, and ties settled the same way every time
+- Nusrat and Rafiq's pooled trip end to end: Rafiq listed as adding 0.970 km, the four
+  stops in order, and fares of ৳ 52.02 and ৳ 71.42 that match the hand calculation below;
+  the old Mohakhali pin turning Rafiq away
+- Route stops: steps out of order refused with `OUT_OF_STOP_ORDER`; readings recorded at
+  pickup and drop-off, which the database won't let anyone change; either cancel removing
+  the passenger's stops and shortening the route; an accept planned against an older route
+  refused
+- Road distances for a route: one matrix request for every pair, cached; the fallback per
+  pair; at most 3 map requests per list refresh, the rest checked on the next one
 - Races, 25 rounds each against Postgres: Nusrat and Shirin for the last seat (exactly one
-  wins); five accepts into one Tesla (never more than 3); accepts racing cancels (seats
-  stay right, no deadlock); three drivers for one request (one wins); a double-tapped
-  accept (one trip); five requests from one passenger (one booking)
+  wins); five accepts into one Tesla (never more than 3); accepts racing steps and cancels
+  (seats and route stay right, no deadlock); three drivers for one request (one wins); a
+  double-tapped accept (one trip); five requests from one passenger (one booking). After
+  each round, every trip's stops are checked against its bookings.
 
 ## Demo credentials
 
@@ -276,11 +289,19 @@ seconds it appears in Jashim's nearby requests. Accept it, then tap **Arrived at
 fare to pay in cash and how it was worked out. To see a driver cancel, tap **Cancel ride**
 before starting: the request goes back to waiting and Nusrat is told why.
 
+To see a pooled ride: with Jashim online at Banani Road 11, have Nusrat request Banani Road
+11 → Mohakhali and accept it. Then have Rafiq request Banani Road 11 → Gulshan 1. Jashim
+sees it under **Requests on your route**, adding 0.970 km. Accept it: the route lists
+Nusrat's pickup, Rafiq's pickup, Nusrat's drop-off, then Rafiq's, and only the next stop
+has a button. Take the steps in order. With no map key, Nusrat pays ৳ 52.02 and Rafiq
+৳ 71.42 ([worked out below](#pooling)), and each sees only their own fare.
+
 To see the last-seat race: with Jashim online at Banani Road 11, have Rafiq request 2 seats
 to Gulshan 1 and accept it. Bullet shows 2 of 3 seats taken. Then have Nusrat and Shirin
-each request 1 seat, open Jashim's screen in two tabs and tap **Accept** on a different
-request in each at the same moment. One gets the seat; the other is told there is no free
-seat any more, and Bullet shows 3 of 3.
+each request 1 seat from Banani Road 11 to Mohakhali, which is on Rafiq's way. Open
+Jashim's screen in two tabs and tap **Accept** on a different request in each at the same
+moment. One gets the seat; the other is told there is no free seat any more, and Bullet
+shows 3 of 3.
 
 ## API overview
 
@@ -347,6 +368,14 @@ gains `occupiedSeats`, and the trip body gains `seats: { capacity, taken }`. An 
 now also fail with 409 `POOL_CHANGED` when the Tesla changed while it was being accepted.
 Shapes and rules are in the [phase 4 LLD](docs/lld/phase-4-seat-capacity.md#3-routes).
 
+Pooling (phase 5) adds no routes either. A Tesla with passengers lists only requests that
+fit its route, each with `addedKm`, and an accept that doesn't fit gets 422
+`NO_LONGER_MATCHES`. The trip body gains `stops` (in order, each with its planned km, its
+reading once reached, and `isNext`) and `odometerKm`, and each passenger gains `canAct`.
+Arrive and complete return 409 `OUT_OF_STOP_ORDER` unless that passenger's stop is next.
+The fare breakdown gains `routeDistanceMethod`. Shapes and rules are in the
+[phase 5 LLD](docs/lld/phase-5-tesla-pooling.md#3-routes).
+
 Every error has the same shape (NFR-35):
 
 ```json
@@ -355,6 +384,63 @@ Every error has the same shape (NFR-35):
 
 Every response carries an `X-Request-Id` header, and the same id appears on that
 request's log line (NFR-42).
+
+## Pooling
+
+**The route.** Each trip has an ordered list of stops: a pickup and a drop-off for every
+passenger. Each stop has its km along the trip, counted from where Bullet stood when the
+trip began. When the driver starts or completes a passenger's ride, that stop's planned km
+becomes its reading, and the database refuses any later change to it (FR-L5, NFR-41). The
+driver takes the stops in order.
+
+**The matching rule (FR-L3).** A request joins a trip with passengers only if its stops can
+go into the remaining route so that:
+
+1. the pickup lies on the route ahead: visiting it adds at most 1 km to the leg it joins;
+2. the drop-off lies on the route after the pickup in the same way, or past the route's
+   end, which may extend towards it but not branch off;
+3. nobody's ride, including the newcomer's, grows more than 1 km beyond their direct
+   distance;
+4. nobody would pay more than their estimate: `detour ≤ 0.4 × shared km`, which is the fare
+   formula rearranged;
+5. there are enough free seats.
+
+Every place for the two new stops is tried, and the one that makes the route shortest wins.
+The rule lives in [`domain/matching.ts`](apps/api/src/domain/matching.ts), which does no
+I/O, so it is tested on its own (NFR-26). A route check needs many road distances, so it
+makes one OpenRouteService matrix request for all of them and caches the answers. Each
+refresh of the driver's list makes at most 3 such requests (NFR-3).
+
+**Nusrat and Rafiq's trip (FR-L4).** Both start at Banani Road 11, where Bullet waits. With
+no map key the distances are straight-line × 1.3: Banani → Mohakhali 1.835 km, Banani →
+Gulshan 1 2.287 km, Mohakhali → Gulshan 1 0.970 km.
+
+- Jashim accepts Nusrat first. The route is her pickup at 0.000 km, then her drop-off at
+  1.835 km.
+- Rafiq fits if Nusrat is dropped first: his ride is 1.835 + 0.970 = 2.805 km against a
+  direct 2.287, a 0.518 km detour. That is under 1 km and under 0.4 × 1.835 = 0.734, the
+  km he shares with Nusrat. Dropping Rafiq first would stretch Nusrat's ride by 1.422 km,
+  so it isn't allowed.
+- The route becomes: pick up Nusrat 0.000, pick up Rafiq 0.000, drop off Nusrat 1.835, drop
+  off Rafiq 2.805.
+
+| Fare = (30 + 20 × actual km − 8 × shared km), capped at the estimate | Nusrat             | Rafiq              |
+| -------------------------------------------------------------------- | ------------------ | ------------------ |
+| Odometer at pickup → drop-off                                        | 0.000 → 1.835      | 0.000 → 2.805      |
+| Actual km, shared km                                                 | 1.835, 1.835       | 2.805, 1.835       |
+| Estimate: 30 + 20 × direct km                                        | 30 + 36.70 = 66.70 | 30 + 45.74 = 75.74 |
+| Computed                                                             | 30 + 36.70 − 14.68 | 30 + 56.10 − 14.68 |
+| **Final**                                                            | **৳ 52.02**        | **৳ 71.42**        |
+
+Both ride 1 seat on a Pool ride, so both multipliers are 1. With an OpenRouteService key
+the distances come from real roads, so the numbers differ.
+
+**Why the Mohakhali pin moved.** At the first Mohakhali pin (23.7781, 90.4050), Gulshan 1
+branches off the way to Mohakhali, and whichever passenger is dropped second rides about
+1.5 km further than their direct trip. FR-L3 allows 1 km, so they wouldn't pool. FR §13
+left this to be checked once routing was built. Rather than loosen the rule, the Mohakhali
+quick pick moved to Wireless Gate (23.7812, 90.4090), where the road from Mohakhali to
+Gulshan 1 begins.
 
 ## Concurrency
 
@@ -370,7 +456,7 @@ it holds with any number of API copies (NFR-19, NFR-20).
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Seats never exceed capacity (FR-C1)     | An accept claims its seats with one statement: `UPDATE vehicles SET occupied_seats = occupied_seats + $seats, version = version + 1 WHERE id = $tesla AND is_online AND version = $seen AND occupied_seats + $seats <= capacity`. A second accept waits for the row lock, then Postgres checks its `WHERE` again against the new row. `CHECK (occupied_seats BETWEEN 0 AND capacity)` backs it up. |
 | Exactly one wins the last seat (FR-R3)  | The same statement. The loser gets 0 rows, then 409 `SEATS_UNAVAILABLE`, and its transaction changes nothing.                                                                                                                                                                                                                                                                                      |
-| Out-of-date accepts are refused (FR-C3) | Every write to a Tesla bumps its `version`. An accept is checked without locks and committed only if the version hasn't moved; otherwise 409 `POOL_CHANGED`, try again. Phase 5 plans the route in that gap, so no transaction waits on the map service.                                                                                                                                           |
+| Out-of-date accepts are refused (FR-C3) | Every write to a Tesla, and every step that moves its route on, bumps its `version`. An accept is checked and its route planned without locks, and committed only if the version hasn't moved; otherwise 409 `POOL_CHANGED`, try again. Completing and cancelling plan the same way and retry up to 3 times, so no transaction waits on the map service.                                           |
 | One driver per request (FR-C2)          | `UPDATE bookings … WHERE status = 'REQUESTED'`. The losing driver gets `ALREADY_CLAIMED`, and the rollback returns its seats.                                                                                                                                                                                                                                                                      |
 | Double taps (FR-C5, NFR-37)             | A repeated accept returns the same trip; a repeated request returns the same booking.                                                                                                                                                                                                                                                                                                              |
 | One active booking (FR-C6)              | A partial unique index on `bookings(passenger_id)` for unfinished states.                                                                                                                                                                                                                                                                                                                          |
@@ -416,14 +502,15 @@ rarely taps that fast, and a retry succeeds.
 - **Two rules arrive early.** One active booking per passenger (FR-C6) and the balance
   checks (FR-W3, FR-W7) were planned for phases 4 and 6. They are enforced from phase 2
   because creating a request depends on them.
-- **A stand-in joining rule until pooling.** A Tesla with passengers takes more requests
-  that fit its free seats and whose pickup is within the search radius of where its trip
-  began. Phase 5 replaces the radius check with the matching rule (FR-L3).
+- **The Mohakhali pin.** The Mohakhali quick pick is Wireless Gate, so Nusrat's and
+  Rafiq's story trips pool under the matching rule ([why](#pooling)).
+- **Where a trip's km start.** A trip's odometer reads 0 where the Tesla stood when the trip
+  began. Two stops at the same place are 0 km apart, with no map request.
 - **Nearby means a straight line.** The 2 km search radius is measured as the crow flies
   from the Tesla, so refreshing the list never waits on the map service.
-- **A single ride's odometer.** Until route stops exist (phase 5), a ride runs straight
-  from pickup (0 km) to destination (its direct km) with nothing shared, so the final fare
-  equals the estimate.
+- **A cancelled pickup's km.** If a passenger cancels while the driver waits at their
+  pickup, the route is planned again from the last stop reached. The km driven to that
+  pickup aren't charged to anyone still aboard.
 - **Stop searching.** After a driver cancel, the passenger's request waits again and their
   screen says why. Cancelling a waiting request is free, which serves as the "stop
   searching" option FR §13 left to the design.
@@ -448,6 +535,11 @@ the full list. Specific to the current state:
   driver cancel leaves no penalty record. Both need the wallet ledger (phase 6).
 - Completing a ride records the fare, but no money moves: cash is paid in person and the
   ledger entries arrive in phase 6.
+- While the map service is failing, fallback distances aren't cached. The same 3 requests
+  then ask it again on every refresh, and a fourth waits until it recovers.
+- A Tesla stays where its trip began until the driver moves it. It isn't moved to the last
+  drop-off when the trip ends.
+- The dashed line on the driver's map joins the stops in order; it isn't the road.
 
 ## Still to come
 

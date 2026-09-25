@@ -6,15 +6,19 @@ import { formatDhakaTime } from '@/lib/time';
 import type { NearbyRequest } from '@/lib/trip';
 import { primaryButton } from './buttons';
 
-// Open requests near the driver's Tesla, oldest first. The driver picks one; nothing is
-// assigned automatically (FR-D8).
+// Open requests the driver can take, oldest first: near an idle Tesla, or on the route of
+// one with passengers (FR-L3). The driver picks one; nothing is assigned automatically
+// (FR-D8).
 export function NearbyRequests({
   requests,
+  onTrip,
   freeSeats,
   accepting,
   onAccept,
 }: {
   requests: NearbyRequest[] | null;
+  // The Tesla has passengers, so requests must fit its route.
+  onTrip: boolean;
   // Only requests that fit these are listed (FR-D7).
   freeSeats: number;
   // The request being accepted; every Accept button waits for it (NFR-37).
@@ -28,7 +32,7 @@ export function NearbyRequests({
     >
       <div className="flex items-baseline justify-between gap-3">
         <h2 id="nearby-requests-heading" className="text-lg font-semibold">
-          Nearby requests
+          {onTrip ? 'Requests on your route' : 'Nearby requests'}
         </h2>
         <p className="text-sm text-slate-500 tabular-nums">
           {freeSeats} {freeSeats === 1 ? 'seat' : 'seats'} free
@@ -40,8 +44,10 @@ export function NearbyRequests({
         </p>
       ) : requests.length === 0 ? (
         <p className="mt-2 text-slate-600">
-          No requests near your Tesla that fit your free seats yet. New ones appear here within a
-          few seconds.
+          {onTrip
+            ? 'No requests fit your route and free seats yet.'
+            : 'No requests near your Tesla that fit your free seats yet.'}{' '}
+          New ones appear here within a few seconds.
         </p>
       ) : (
         <ul className="mt-3 divide-y divide-slate-100">
@@ -61,6 +67,11 @@ export function NearbyRequests({
                   <p className="mt-1 text-sm text-slate-500">
                     {request.directKm} km trip · requested {formatDhakaTime(request.requestedAt)}
                   </p>
+                  {request.addedKm !== null && (
+                    <p className="mt-1 text-sm font-medium text-emerald-700">
+                      Adds {request.addedKm} km to your route
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center justify-between gap-4 sm:flex-col sm:items-end">
                   <p className="text-lg font-semibold tabular-nums">

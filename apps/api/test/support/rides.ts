@@ -3,10 +3,11 @@ import { expect } from 'vitest';
 import { getJson, postJson, sendJson } from './accounts.js';
 import type { TestServer } from './server.js';
 
-// Story places (phase 2 quick picks). Mohakhali and Gulshan 1 are under 2 km from Banani
-// in a straight line; Uttara is far outside any driver's radius there.
+// Story places (the quick picks). Mohakhali and Gulshan 1 are under 2 km from Banani in a
+// straight line; Uttara is far outside any driver's radius there. Mohakhali is at Wireless
+// Gate, where the road to Gulshan 1 begins, so Nusrat and Rafiq pool (phase 5 LLD §7).
 export const BANANI = { lat: 23.7937, lng: 90.4066, label: 'Banani Road 11' };
-export const MOHAKHALI = { lat: 23.7781, lng: 90.405, label: 'Mohakhali' };
+export const MOHAKHALI = { lat: 23.7812, lng: 90.409, label: 'Mohakhali' };
 export const GULSHAN_1 = { lat: 23.7806, lng: 90.4163, label: 'Gulshan 1' };
 export const UTTARA = { lat: 23.8759, lng: 90.3795, label: 'Uttara' };
 
@@ -109,4 +110,37 @@ export async function expectSeatsMatchBookings(pool: pg.Pool): Promise<void> {
 export async function resetRides(pool: pg.Pool): Promise<void> {
   await pool.query('TRUNCATE bookings, pools CASCADE');
   await pool.query('UPDATE vehicles SET occupied_seats = 0');
+}
+
+// Every trip's route matches its bookings (phase 5 LLD §4): each booking with the driver
+// has one pickup and one drop-off in its trip, the pickup first; nobody else has a stop
+// still to come; and the stops reached come before those still ahead.
+export async function expectRouteMatchesBookings(pool: pg.Pool): Promise<void> {
+  const { rows: missing } = await pool.query(
+    `SELECT b.id FROM bookings b
+     WHERE b.status IN ('ACCEPTED', 'DRIVER_ARRIVED', 'STARTED')
+       AND (
+         SELECT count(*) FILTER (WHERE s.type = 'pickup') <> 1
+           OR count(*) FILTER (WHERE s.type = 'dropoff') <> 1
+           OR max(s.sequence) FILTER (WHERE s.type = 'pickup')
+              > min(s.sequence) FILTER (WHERE s.type = 'dropoff')
+         FROM route_stops s WHERE s.booking_id = b.id AND s.pool_id = b.pool_id
+       )`,
+  );
+  expect(missing, 'bookings without a pickup and a drop-off').toEqual([]);
+
+  const { rows: strays } = await pool.query(
+    `SELECT s.id FROM route_stops s JOIN bookings b ON b.id = s.booking_id
+     WHERE s.reached_at IS NULL
+       AND (b.pool_id IS DISTINCT FROM s.pool_id
+         OR b.status NOT IN ('ACCEPTED', 'DRIVER_ARRIVED', 'STARTED'))`,
+  );
+  expect(strays, 'stops still ahead for bookings not with the driver').toEqual([]);
+
+  const { rows: outOfOrder } = await pool.query(
+    `SELECT pool_id FROM route_stops GROUP BY pool_id
+     HAVING max(sequence) FILTER (WHERE reached_at IS NOT NULL)
+          > min(sequence) FILTER (WHERE reached_at IS NULL)`,
+  );
+  expect(outOfOrder, 'trips with a stop reached after one still ahead').toEqual([]);
 }
