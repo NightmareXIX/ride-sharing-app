@@ -39,6 +39,12 @@ export interface TripBooking {
   nextAction: NextAction;
   // The next action happens at the next stop, so it can be taken now.
   canAct: boolean;
+  // From then on, a passenger who hasn't come can be marked a no-show; null before arrival.
+  noShowFrom: string | null;
+  canNoShow: boolean;
+  // Cancelling after then records a penalty against the driver.
+  penaltyFrom: string;
+  cancelRecordsPenalty: boolean;
 }
 
 // One stop on the driver's route, in order.

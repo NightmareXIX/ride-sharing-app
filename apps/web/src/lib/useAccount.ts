@@ -41,5 +41,16 @@ export function useAccount(role: Role) {
     setAttempt((n) => n + 1);
   }, []);
 
-  return { state, retry };
+  // Reads the account again without a loading state, e.g. for the balance after a ride is
+  // paid for or fined. A failure keeps what is shown; the next refresh tries again.
+  const refresh = useCallback(async () => {
+    try {
+      const account = await api<Account>('/me');
+      setState((current) => (current.status === 'ready' ? { status: 'ready', account } : current));
+    } catch {
+      // Nothing to do: the balance shown is at most one change behind.
+    }
+  }, []);
+
+  return { state, retry, refresh };
 }

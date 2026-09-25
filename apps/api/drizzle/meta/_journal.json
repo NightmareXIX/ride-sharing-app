@@ -78,6 +78,20 @@
       "when": 1790340347687,
       "tag": "0010_add_fare_route_method",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790347164634,
+      "tag": "0011_create_wallet_transactions",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790347844940,
+      "tag": "0012_create_driver_penalties",
+      "breakpoints": true
     }
   ]
 }

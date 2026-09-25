@@ -18,6 +18,11 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   teslapay: 'TeslaPay',
 };
 
+// A late cancel or a no-show costs this much (FR §2). The API charges it; this only warns.
+export const FINE_AMOUNT = '30.00';
+
+export type FineReason = 'late_cancel' | 'no_show';
+
 // The body of POST /fare-estimates. Every figure is a string, never a float.
 export interface FareQuote {
   directKm: string;
@@ -50,10 +55,14 @@ export interface Booking {
   cancelledAt: string | null;
   // Cancelling after acceptance is free until then.
   freeCancelUntil: string | null;
+  // What cancelling now would cost, once the free window has passed.
+  cancelFine: string | null;
   driver: { name: string } | null;
   vehicle: { name: string } | null;
   // Set while the ride waits again because its driver cancelled.
   notice: 'driver_cancelled' | null;
   // Once the ride is complete.
   fare: FareBreakdown | null;
+  // Charged for a late cancel or a no-show.
+  fine: { amount: string; reason: FineReason } | null;
 }

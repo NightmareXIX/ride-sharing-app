@@ -11,7 +11,9 @@ import {
   signUpAs,
 } from './support/accounts.js';
 import { TEST_DATABASE_URL } from './support/db.js';
+import { goOnlineAt } from './support/rides.js';
 import { startTestServer, type TestServer } from './support/server.js';
+import { balanceOf, fineByLateCancel, topUp } from './support/wallet.js';
 
 const BANANI = { lat: 23.7937, lng: 90.4066, label: 'Banani Road 11' };
 const MOHAKHALI = { lat: 23.7781, lng: 90.405, label: 'Mohakhali' };
@@ -74,13 +76,6 @@ async function validationPaths(res: Response): Promise<string[]> {
   };
   expect(body.error.code).toBe('VALIDATION_ERROR');
   return body.error.details.map((detail) => detail.path);
-}
-
-async function setBalance(email: string, balance: string): Promise<void> {
-  await pool.query(
-    'UPDATE wallets SET balance = $1 WHERE user_id = (SELECT id FROM users WHERE email = $2)',
-    [balance, email],
-  );
 }
 
 async function historyOf(bookingId: string) {
@@ -150,11 +145,13 @@ describe('requesting a ride (FR-P3)', () => {
       completedAt: null,
       cancelledAt: null,
       freeCancelUntil: null,
+      cancelFine: null,
       // No driver has it yet.
       driver: null,
       vehicle: null,
       notice: null,
       fare: null,
+      fine: null,
     });
     expect(await historyOf(booking.id)).toEqual([
       { from_status: null, to_status: 'REQUESTED', reason: 'requested' },
@@ -209,7 +206,7 @@ describe('requesting a ride (FR-P3)', () => {
   });
 
   it('accepts TeslaPay when the balance covers the estimate', async () => {
-    await setBalance('nusrat@example.com', '500.00');
+    await topUp(server, nusrat, '500.00');
 
     const booking = await bookingOf(
       await requestRide({ ...NUSRAT_TRIP, paymentMethod: 'teslapay' }),
@@ -220,7 +217,10 @@ describe('requesting a ride (FR-P3)', () => {
   it.each(['cash', 'teslapay'])(
     'refuses a %s request while the balance is negative (FR-W7)',
     async (paymentMethod) => {
-      await setBalance('nusrat@example.com', '-30.00');
+      // Only a fine takes a balance below zero (FR-W6), so she is fined for real.
+      await goOnlineAt(server, driver);
+      await fineByLateCancel(server, pool, driver, nusrat);
+      expect(await balanceOf(server, nusrat)).toBe('-30.00');
 
       const res = await requestRide({ ...NUSRAT_TRIP, paymentMethod });
       expect(res.status).toBe(422);

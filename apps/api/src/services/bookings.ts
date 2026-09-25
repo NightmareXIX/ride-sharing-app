@@ -11,6 +11,7 @@ import {
   users,
   vehicles,
   wallets,
+  walletTransactions,
 } from '../db/schema/index.js';
 import {
   FINAL_STATUSES,
@@ -20,6 +21,7 @@ import {
   type PaymentMethod,
 } from '../domain/booking.js';
 import { estimateFare, type FareEstimate, type RideOption } from '../domain/fare.js';
+import { FINE_AMOUNT } from '../domain/wallet.js';
 import type { PlannedStop } from '../domain/route.js';
 import type { DistanceMethod, DistanceService } from '../geo/distance.js';
 import type { LatLng } from '../geo/serviceArea.js';
@@ -29,6 +31,7 @@ import { fareColumns, toFareBreakdown, type FareBreakdown } from './fares.js';
 import { finishPoolIfDone, releaseSeats } from './pools.js';
 import { readTripRoute, replanWithout, ROUTE_ATTEMPTS, writePlan } from './routes.js';
 import { transitionBooking } from './transitions.js';
+import { postEntry, type FineReason } from './wallet.js';
 
 export interface RideDeps {
   db: Database;
@@ -78,6 +81,10 @@ export interface BookingView {
   cancelledAt: Date | null;
   // Until then, cancelling after acceptance is free (FR-P7). Set by the database clock.
   freeCancelUntil: Date | null;
+  // What cancelling now would cost: the fine once the free window has passed, else null.
+  cancelFine: string | null;
+  // The fine charged for a late cancel or a no-show, once there is one (FR-W6).
+  fine: { amount: string; reason: FineReason } | null;
   driver: { name: string } | null;
   vehicle: { name: string } | null;
   notice: BookingNotice | null;
@@ -120,6 +127,12 @@ const bookingColumns = {
   freeCancelUntil: sql<Date | null>`${bookings.acceptedAt} + ${freeCancelWindow}`.mapWith(
     bookings.acceptedAt,
   ),
+  // Worked out at each read by the database clock, so the warning shows from the right moment.
+  cancelFine: sql<string | null>`CASE
+    WHEN ${bookings.status} IN ('ACCEPTED', 'DRIVER_ARRIVED')
+      AND now() > ${bookings.acceptedAt} + ${freeCancelWindow}
+    THEN ${FINE_AMOUNT} END`,
+  fineAmount: sql<string | null>`abs(${walletTransactions.amount})`,
   driverName: drivers.name,
   vehicleName: vehicles.name,
   latestReason,
@@ -134,14 +147,18 @@ export function selectBooking(db: Database) {
     .leftJoin(pools, eq(pools.id, bookings.poolId))
     .leftJoin(vehicles, eq(vehicles.id, pools.vehicleId))
     .leftJoin(drivers, eq(drivers.id, vehicles.driverId))
-    .leftJoin(fares, eq(fares.bookingId, bookings.id));
+    .leftJoin(fares, eq(fares.bookingId, bookings.id))
+    .leftJoin(
+      walletTransactions,
+      and(eq(walletTransactions.bookingId, bookings.id), eq(walletTransactions.type, 'fine')),
+    );
 }
 
 type BookingRow = Awaited<ReturnType<typeof selectBooking>>[number];
 
 export function toBookingView(row: BookingRow): BookingView {
   const { pickupLat, pickupLng, pickupLabel, destLat, destLng, destLabel, ...rest } = row;
-  const { driverName, vehicleName, latestReason: reason, fare, ...details } = rest;
+  const { driverName, vehicleName, latestReason: reason, fare, fineAmount, ...details } = rest;
   return {
     ...details,
     pickup: { lat: pickupLat, lng: pickupLng, label: pickupLabel },
@@ -150,6 +167,8 @@ export function toBookingView(row: BookingRow): BookingView {
     vehicle: vehicleName === null ? null : { name: vehicleName },
     notice: row.status === 'REQUESTED' && reason === 'driver_cancel' ? 'driver_cancelled' : null,
     fare: fare ? toFareBreakdown(fare) : null,
+    // A fined booking was cancelled for one of the two fine reasons, its last change.
+    fine: fineAmount === null ? null : { amount: fineAmount, reason: reason as FineReason },
   };
 }
 
@@ -366,9 +385,10 @@ async function planCancel(
 }
 
 // A passenger cancels any time before the trip starts (FR-P7). It is free while waiting
-// and for 3 minutes after acceptance; later it is recorded as a late cancel, measured by
-// the database clock (FR-R9, NFR-38). Phase 6 adds the fine. The booking's stops leave the
-// driver's route, and the rest is re-planned. Pressing Cancel twice is harmless (NFR-37).
+// and for 3 minutes after acceptance; later it is a late cancel, measured by the database
+// clock (FR-R9, NFR-38), and costs a 30 tk fine, even below zero (FR-W6). The booking's
+// stops leave the driver's route, and the rest is re-planned. Pressing Cancel twice is
+// harmless (NFR-37).
 export async function cancelRide(
   deps: RideDeps,
   log: Logger,
@@ -420,6 +440,10 @@ export async function cancelRide(
       }
       // The driver's trip ends if this was its only passenger (FR-R7).
       if (result.ok && result.poolId) await finishPoolIfDone(tx, result.poolId);
+      // The wallet is locked last: vehicle → booking → wallet (FR-C7).
+      if (result.ok && timing?.late) {
+        await postEntry(tx, { userId: passengerId, type: 'fine', amount: FINE_AMOUNT, bookingId });
+      }
       return result;
     });
   };

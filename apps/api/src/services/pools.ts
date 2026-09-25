@@ -5,6 +5,7 @@ import type { Database, Transaction } from '../db/client.js';
 import {
   bookings,
   bookingStatusHistory,
+  driverPenalties,
   fares,
   pools,
   routeStops,
@@ -13,7 +14,9 @@ import {
 } from '../db/schema/index.js';
 import {
   ASSIGNED_STATUSES,
+  FREE_CANCEL_WINDOW,
   isAssigned,
+  NO_SHOW_WAIT,
   type AssignedStatus,
   type BookingStatus,
   type PaymentMethod,
@@ -30,6 +33,7 @@ import {
   type StopType,
 } from '../domain/route.js';
 import { fitsFreeSeats } from '../domain/seats.js';
+import { FINE_AMOUNT } from '../domain/wallet.js';
 import type { DistanceMethod, DistanceService } from '../geo/distance.js';
 import type { LatLng } from '../geo/serviceArea.js';
 import { AppError } from '../http/errors.js';
@@ -48,6 +52,7 @@ import {
   writePlan,
 } from './routes.js';
 import { transitionBooking } from './transitions.js';
+import { postEntry, settleFare, type Settlement } from './wallet.js';
 
 // What the trip services need beyond the database: road distances to plan routes with.
 export interface TripDeps {
@@ -73,6 +78,14 @@ export interface TripBooking {
   nextAction: NextAction;
   // Whether the next action can be taken now: it happens at the next stop.
   canAct: boolean;
+  // From then on, a passenger who hasn't come can be marked a no-show (FR-D11); null
+  // before arrival. canNoShow says whether that time has come, by the database clock.
+  noShowFrom: Date | null;
+  canNoShow: boolean;
+  // Cancelling after this records a penalty against the driver (FR-D13);
+  // cancelRecordsPenalty says whether that time has come, by the database clock.
+  penaltyFrom: Date;
+  cancelRecordsPenalty: boolean;
 }
 
 // One stop on the driver's route, in order (FR-D14, FR-L5).
@@ -99,6 +112,12 @@ export interface DriverTrip {
   stops: TripStopView[];
   bookings: TripBooking[];
 }
+
+const noShowWait = sql.raw(`interval '${NO_SHOW_WAIT}'`);
+const freeCancelWindow = sql.raw(`interval '${FREE_CANCEL_WINDOW}'`);
+
+// A driver cancel this long after acceptance is late: the same 3 minutes a passenger gets.
+const lateAfterAccept = sql<boolean>`coalesce(now() > ${bookings.acceptedAt} + ${freeCancelWindow}, false)`;
 
 // The stop each step happens at.
 const STEP_STOPS: Record<NextAction, StopType> = {
@@ -175,6 +194,14 @@ export async function getDriverTrip(db: Database, driverId: string): Promise<Dri
       acceptedAt: bookings.acceptedAt,
       arrivedAt: bookings.arrivedAt,
       startedAt: bookings.startedAt,
+      noShowFrom: sql<Date | null>`${bookings.arrivedAt} + ${noShowWait}`.mapWith(
+        bookings.arrivedAt,
+      ),
+      canNoShow: sql<boolean>`${bookings.status} = 'DRIVER_ARRIVED' AND now() >= ${bookings.arrivedAt} + ${noShowWait}`,
+      penaltyFrom: sql<Date | null>`${bookings.acceptedAt} + ${freeCancelWindow}`.mapWith(
+        bookings.acceptedAt,
+      ),
+      cancelRecordsPenalty: lateAfterAccept,
     })
     .from(bookings)
     .innerJoin(users, eq(users.id, bookings.passengerId))
@@ -182,9 +209,9 @@ export async function getDriverTrip(db: Database, driverId: string): Promise<Dri
     .orderBy(asc(bookings.acceptedAt), asc(bookings.id));
 
   const trip = rows.flatMap((row): TripBooking[] => {
-    const { status, acceptedAt } = row;
+    const { status, acceptedAt, penaltyFrom } = row;
     // Only assigned bookings are selected, and those always have an accept time.
-    if (!isAssigned(status) || !acceptedAt) return [];
+    if (!isAssigned(status) || !acceptedAt || !penaltyFrom) return [];
     const action = nextAction(status);
     return [
       {
@@ -203,6 +230,11 @@ export async function getDriverTrip(db: Database, driverId: string): Promise<Dri
         startedAt: row.startedAt,
         nextAction: action,
         canAct: isNext(row.id, STEP_STOPS[action]),
+        noShowFrom: row.noShowFrom,
+        canNoShow: row.canNoShow,
+        penaltyFrom,
+        // Only a booking not yet aboard can be cancelled at all.
+        cancelRecordsPenalty: status !== 'STARTED' && row.cancelRecordsPenalty,
       },
     ];
   });
@@ -675,6 +707,8 @@ interface PricedDropOff {
   version: number;
   // Null unless the passenger is aboard: there is nothing to price, and the step says why.
   fare: typeof fares.$inferInsert | null;
+  // Who pays whom, and how, once the fare is recorded.
+  settlement: Settlement | null;
 }
 
 // Prices a drop-off from the route (FR-F4, FR-F5): the pickup's reading, the drop-off's
@@ -694,6 +728,8 @@ async function priceDropOff(
       estimatedFare: bookings.estimatedFare,
       seats: bookings.seats,
       rideOption: bookings.rideOption,
+      passengerId: bookings.passengerId,
+      paymentMethod: bookings.paymentMethod,
       version: vehicles.version,
       lat: vehicles.currentLat,
       lng: vehicles.currentLng,
@@ -704,7 +740,7 @@ async function priceDropOff(
     .where(and(eq(bookings.id, bookingId), eq(vehicles.driverId, driverId)));
   if (!booking) throw notFound();
   const { version, poolId } = booking;
-  if (booking.status !== 'STARTED' || !poolId) return { version, fare: null };
+  if (booking.status !== 'STARTED' || !poolId) return { version, fare: null, settlement: null };
 
   const route = await readTripRoute(db, poolId, teslaLocation(booking.lat, booking.lng));
   const stopOf = (id: string, type: StopType) =>
@@ -756,12 +792,19 @@ async function priceDropOff(
       distanceMethod: booking.distanceMethod,
       routeDistanceMethod,
     },
+    settlement: {
+      bookingId,
+      passengerId: booking.passengerId,
+      driverId,
+      paymentMethod: booking.paymentMethod,
+      finalFare: fare.finalFare,
+    },
   };
 }
 
 // The passenger is dropped off: the booking completes, the stop's reading and the fare are
-// recorded, the seats are freed and the trip ends if nobody else is aboard, all in one
-// transaction (NFR-14). Cash is paid in person (FR-W5); ledger entries arrive in phase 6.
+// recorded, the ride is paid for, the seats are freed and the trip ends if nobody else is
+// aboard, all in one transaction (NFR-14, FR-C7).
 export async function completeTrip(
   db: Database,
   driverId: string,
@@ -769,12 +812,13 @@ export async function completeTrip(
 ): Promise<CompletedTrip> {
   await withFreshPlan(async () => {
     // The fare maths runs before the transaction, from readings that never change (NFR-41).
-    const { version, fare } = await priceDropOff(db, driverId, bookingId);
+    const { version, fare, settlement } = await priceDropOff(db, driverId, bookingId);
     await takeStep(db, driverId, bookingId, 'complete', {
       planned: version,
       andThen: async (tx, { vehicleId, poolId, seats }) => {
-        if (!fare) throw new StaleRoute();
+        if (!fare || !settlement) throw new StaleRoute();
         await tx.insert(fares).values(fare);
+        await settleFare(tx, settlement);
         await releaseSeats(tx, vehicleId, seats);
         await finishPoolIfDone(tx, poolId);
       },
@@ -786,16 +830,21 @@ export async function completeTrip(
   return { pool: await getDriverTrip(db, driverId), fare: stored };
 }
 
-// Whether this driver's cancel is the latest thing to happen to the booking, so a second
-// tap of Cancel can be answered as the first was.
-async function cancelledLastBy(tx: Transaction, bookingId: string, driverId: string) {
+// Whether this driver's cancel or no-show is the latest thing to happen to the booking, so a
+// second tap can be answered as the first was.
+async function lastChangedBy(
+  tx: Transaction,
+  bookingId: string,
+  driverId: string,
+  reason: TransitionReason,
+): Promise<boolean> {
   const [latest] = await tx
     .select({ reason: bookingStatusHistory.reason, actorId: bookingStatusHistory.actorId })
     .from(bookingStatusHistory)
     .where(eq(bookingStatusHistory.bookingId, bookingId))
     .orderBy(desc(bookingStatusHistory.createdAt), desc(bookingStatusHistory.id))
     .limit(1);
-  return latest?.reason === 'driver_cancel' && latest.actorId === driverId;
+  return latest?.reason === reason && latest.actorId === driverId;
 }
 
 // The route once the booking leaves this driver's trip, planned before the transaction.
@@ -836,7 +885,8 @@ async function planLeaving(
 // The driver drops a passenger before pickup (FR-D12). The request goes back to REQUESTED,
 // visible to every driver again, and keeps its place in the queue. Its seats are freed,
 // its stops leave the route and the rest is re-planned, and the history keeps the pool it
-// left. The penalty for a late cancel (FR-D13) arrives in phase 6.
+// left. More than 3 minutes after accepting, by the database clock, a penalty is recorded
+// against the driver in the same transaction (FR-D13, NFR-38).
 export async function driverCancel(
   deps: TripDeps,
   log: Logger,
@@ -848,9 +898,16 @@ export async function driverCancel(
     const { version, unreached } = await planLeaving(deps, log, driverId, bookingId);
     await db.transaction(async (tx) => {
       const vehicleId = await lockTesla(tx, driverId, version);
+      const owner = inTripsOf(tx, vehicleId);
+      // The cancel clears accepted_at, so how late it is must be read first.
+      const [timing] = await tx
+        .select({ late: lateAfterAccept })
+        .from(bookings)
+        .where(and(eq(bookings.id, bookingId), owner))
+        .for('update');
       const outcome = await transitionBooking(tx, {
         bookingId,
-        owner: inTripsOf(tx, vehicleId),
+        owner,
         from: ['ACCEPTED', 'DRIVER_ARRIVED'],
         to: 'REQUESTED',
         actor: { id: driverId, role: 'driver' },
@@ -862,11 +919,16 @@ export async function driverCancel(
         await releaseSeats(tx, vehicleId, outcome.seats);
         await writePlan(tx, outcome.poolId, unreached);
         await finishPoolIfDone(tx, outcome.poolId);
+        if (timing?.late) {
+          await tx
+            .insert(driverPenalties)
+            .values({ driverId, bookingId, reason: 'late_driver_cancel' });
+        }
         return;
       }
       if (outcome.current === null) {
         // Already handed back by this driver: a second tap (NFR-37).
-        if (await cancelledLastBy(tx, bookingId, driverId)) return;
+        if (await lastChangedBy(tx, bookingId, driverId, 'driver_cancel')) return;
         throw notFound();
       }
       if (outcome.current === 'STARTED') {
@@ -877,6 +939,86 @@ export async function driverCancel(
         );
       }
       throw outOfStep(outcome.current);
+    });
+  });
+  return getDriverTrip(db, driverId);
+}
+
+function noShowRefused(current: BookingStatus): AppError {
+  if (current === 'ACCEPTED') {
+    return new AppError(409, 'INVALID_TRANSITION', 'Mark that you have arrived first.');
+  }
+  if (current === 'STARTED') {
+    return new AppError(409, 'INVALID_TRANSITION', 'The passenger is already aboard.');
+  }
+  return outOfStep(current);
+}
+
+// The passenger didn't come (FR-D11). Allowed 5 minutes after the driver arrived, by the
+// database clock (FR-R9, NFR-38). The booking is cancelled, its seats are freed, its stops
+// leave the route and the rest is re-planned, as for a driver cancel, and the passenger is
+// fined 30 tk, even below zero (FR-W6). The wallet is locked last (FR-C7).
+export async function markNoShow(
+  deps: TripDeps,
+  log: Logger,
+  driverId: string,
+  bookingId: string,
+): Promise<DriverTrip | null> {
+  const { db } = deps;
+  await withFreshPlan(async () => {
+    const { version, unreached } = await planLeaving(deps, log, driverId, bookingId);
+    await db.transaction(async (tx) => {
+      const vehicleId = await lockTesla(tx, driverId, version);
+      const owner = inTripsOf(tx, vehicleId);
+      const [booking] = await tx
+        .select({
+          status: bookings.status,
+          passengerId: bookings.passengerId,
+          waited: sql<boolean>`coalesce(now() >= ${bookings.arrivedAt} + ${noShowWait}, false)`,
+        })
+        .from(bookings)
+        .where(and(eq(bookings.id, bookingId), owner))
+        .for('update');
+      if (!booking) throw notFound();
+      if (booking.status === 'DRIVER_ARRIVED' && !booking.waited) {
+        throw new AppError(
+          422,
+          'NO_SHOW_TOO_EARLY',
+          'You can mark a no-show 5 minutes after arriving.',
+        );
+      }
+
+      const outcome = await transitionBooking(tx, {
+        bookingId,
+        owner,
+        from: ['DRIVER_ARRIVED'],
+        to: 'CANCELLED',
+        actor: { id: driverId, role: 'driver' },
+        reason: 'no_show',
+        set: { cancelledAt: sql`now()` },
+      });
+      if (outcome.ok) {
+        if (!outcome.poolId || !unreached) throw new StaleRoute();
+        await releaseSeats(tx, vehicleId, outcome.seats);
+        await writePlan(tx, outcome.poolId, unreached);
+        await finishPoolIfDone(tx, outcome.poolId);
+        await postEntry(tx, {
+          userId: booking.passengerId,
+          type: 'fine',
+          amount: FINE_AMOUNT,
+          bookingId,
+        });
+        return;
+      }
+      if (outcome.current === null) throw notFound();
+      // Already marked by this driver: a second tap, with no second fine (NFR-37).
+      if (
+        outcome.current === 'CANCELLED' &&
+        (await lastChangedBy(tx, bookingId, driverId, 'no_show'))
+      ) {
+        return;
+      }
+      throw noShowRefused(outcome.current);
     });
   });
   return getDriverTrip(db, driverId);

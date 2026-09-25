@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
 import { AppShell, Card } from '@/components/AppShell';
@@ -13,7 +14,14 @@ import { formatTaka } from '@/lib/money';
 import { useAccount } from '@/lib/useAccount';
 import { usePolling } from '@/lib/usePolling';
 
-function PassengerHome({ account }: { account: Account }) {
+// The balance changes when a ride is paid for or fined, so the account is read again then.
+function PassengerHome({
+  account,
+  onMoneyMoved,
+}: {
+  account: Account;
+  onMoneyMoved: () => Promise<void>;
+}) {
   const router = useRouter();
   const [booking, setBooking] = useState<Booking | null>(account.currentBooking);
   // The ride that just ended, shown until the passenger moves on.
@@ -41,7 +49,11 @@ function PassengerHome({ account }: { account: Account }) {
           : null;
       if (changes.current !== startedAt) return;
       setBooking(current);
-      if (ended) setFinished(ended);
+      if (ended) {
+        setFinished(ended);
+        // A TeslaPay ride was paid for, or a no-show fined.
+        void onMoneyMoved();
+      }
       setConnectionLost(false);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) router.replace('/login');
@@ -53,13 +65,19 @@ function PassengerHome({ account }: { account: Account }) {
     if (!booking) return;
     setAlert('');
     try {
-      await api<{ booking: Booking }>(`/bookings/${booking.id}/cancel`, { method: 'POST' });
+      const { booking: cancelled } = await api<{ booking: Booking }>(
+        `/bookings/${booking.id}/cancel`,
+        { method: 'POST' },
+      );
       show(null);
       setNotice(
-        booking.status === 'REQUESTED'
-          ? 'Your request was cancelled. No charge.'
-          : 'Your ride was cancelled.',
+        cancelled.fine
+          ? `Your ride was cancelled. A ${formatTaka(cancelled.fine.amount)} late-cancel fine was taken from your TeslaPay balance.`
+          : booking.status === 'REQUESTED'
+            ? 'Your request was cancelled. No charge.'
+            : 'Your ride was cancelled. No charge.',
       );
+      if (cancelled.fine) void onMoneyMoved();
     } catch (err) {
       setAlert((err as Error).message);
       // The ride may have moved on; show where it is now.
@@ -98,7 +116,7 @@ function PassengerHome({ account }: { account: Account }) {
 }
 
 export default function PassengerHomePage() {
-  const { state, retry } = useAccount('passenger');
+  const { state, retry, refresh } = useAccount('passenger');
 
   return (
     <AppShell state={state} retry={retry}>
@@ -106,14 +124,21 @@ export default function PassengerHomePage() {
         <div className="space-y-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h1 className="text-2xl font-semibold tracking-tight">Hi, {state.account.user.name}</h1>
-            <p className="text-sm text-slate-600">
+            <Link
+              href="/passenger/wallet"
+              className="rounded-lg text-sm text-slate-600 hover:underline focus-visible:outline-2 focus-visible:outline-slate-900"
+            >
               TeslaPay{' '}
-              <span className="font-semibold tabular-nums text-slate-900">
+              <span
+                className={`font-semibold tabular-nums ${
+                  state.account.wallet.balance.startsWith('-') ? 'text-red-700' : 'text-slate-900'
+                }`}
+              >
                 {formatTaka(state.account.wallet.balance)}
               </span>
-            </p>
+            </Link>
           </div>
-          <PassengerHome account={state.account} />
+          <PassengerHome account={state.account} onMoneyMoved={refresh} />
         </div>
       )}
     </AppShell>

@@ -1,7 +1,8 @@
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { hashPassword } from '../auth/password.js';
+import { postEntry } from '../services/wallet.js';
 import type { Database } from './client.js';
-import { users, vehicles, wallets, type NewUser } from './schema/index.js';
+import { users, vehicles, wallets, walletTransactions, type NewUser } from './schema/index.js';
 
 // Demo accounts are meant to be public: they are listed in the README (FR-S2).
 export const DEMO_PASSWORD = 'TeslaPool#2026';
@@ -24,6 +25,16 @@ export const STORY_VEHICLE = {
   location: { lat: 23.7937, lng: 90.4066 },
 };
 
+// Demo money, so the story can be shown (FR-S3): Nusrat and Rafiq pay their pooled ride by
+// TeslaPay, and Shirin's 20 tk is small enough that a 30 tk fine takes her below zero,
+// which shows the negative-balance block. Jashim earns from rides. Each top-up has a fixed
+// id, so it is made once however often the seed runs.
+export const STORY_TOP_UPS = [
+  { id: '5eed0000-0000-4000-8000-000000000001', email: 'nusrat@teslapool.test', amount: '500.00' },
+  { id: '5eed0000-0000-4000-8000-000000000002', email: 'rafiq@teslapool.test', amount: '500.00' },
+  { id: '5eed0000-0000-4000-8000-000000000003', email: 'shirin@teslapool.test', amount: '20.00' },
+] as const;
+
 // Safe to run on every start (NFR-31): existing rows are left untouched, so restarting
 // the API never resets someone's demo progress. Returns the emails actually inserted.
 export async function seedStoryCast(db: Database): Promise<string[]> {
@@ -45,11 +56,36 @@ export async function seedStoryCast(db: Database): Promise<string[]> {
         ),
       );
 
-    // Balances start at zero: money only moves through the ledger (NFR-39).
     await tx
       .insert(wallets)
       .values(cast.map((member) => ({ userId: member.id })))
       .onConflictDoNothing({ target: wallets.userId });
+
+    // Money only moves through the ledger (NFR-39), so the demo balances are top-ups too.
+    for (const topUp of STORY_TOP_UPS) {
+      const [member] = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.email, topUp.email));
+      if (!member) continue;
+      // Locked first, so two seeds running at once can't both make the top-up.
+      await tx
+        .select({ id: wallets.id })
+        .from(wallets)
+        .where(eq(wallets.userId, member.id))
+        .for('update');
+      const [made] = await tx
+        .select({ id: walletTransactions.id })
+        .from(walletTransactions)
+        .where(eq(walletTransactions.id, topUp.id));
+      if (made) continue;
+      await postEntry(tx, {
+        id: topUp.id,
+        userId: member.id,
+        type: 'top_up',
+        amount: topUp.amount,
+      });
+    }
 
     const [driver] = await tx
       .select({ id: users.id })

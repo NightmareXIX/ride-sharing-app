@@ -34,11 +34,15 @@ export type TransitionReason =
   | 'driver_arrived'
   | 'started'
   | 'completed'
-  | 'driver_cancel';
+  | 'driver_cancel'
+  | 'no_show';
 
 // A passenger may cancel for free this long after acceptance (FR-P7). Used inside SQL, so
 // the database clock decides (FR-R9, NFR-38).
 export const FREE_CANCEL_WINDOW = '3 minutes';
+
+// A driver may mark a no-show this long after arriving (FR-D11), by the database clock too.
+export const NO_SHOW_WAIT = '5 minutes';
 
 export const PAYMENT_METHODS = ['cash', 'teslapay'] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];

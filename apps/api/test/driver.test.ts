@@ -63,6 +63,7 @@ describe('driver Tesla (FR-D3, FR-D4)', () => {
       occupiedSeats: 0,
       isOnline: false,
       location: null,
+      penaltyCount: 0,
     });
   });
 

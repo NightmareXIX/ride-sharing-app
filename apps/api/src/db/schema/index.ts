@@ -6,3 +6,5 @@ export * from './pools.js';
 export * from './bookings.js';
 export * from './fares.js';
 export * from './routeStops.js';
+export * from './walletTransactions.js';
+export * from './driverPenalties.js';

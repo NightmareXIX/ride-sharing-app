@@ -9,4 +9,6 @@ export interface DriverVehicle {
   occupiedSeats: number;
   isOnline: boolean;
   location: LatLng | null;
+  // Late cancels recorded against the driver.
+  penaltyCount: number;
 }
