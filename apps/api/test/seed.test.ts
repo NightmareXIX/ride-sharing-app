@@ -4,7 +4,7 @@ import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Database } from '../src/db/client.js';
 import { users, vehicles, wallets } from '../src/db/schema/index.js';
-import { DEMO_PASSWORD, seedStoryCast } from '../src/db/seeder.js';
+import { DEMO_PASSWORD, seedStoryCast, STORY_VEHICLE } from '../src/db/seeder.js';
 import { TEST_DATABASE_URL } from './support/db.js';
 
 let pool: pg.Pool;
@@ -71,6 +71,30 @@ describe('story cast seed (FR-S1, NFR-31)', () => {
       .from(vehicles)
       .innerJoin(users, eq(users.id, vehicles.driverId));
     expect(rows).toEqual([{ driver: 'Jashim', name: 'Bullet', capacity: 3 }]);
+  });
+
+  it('parks Bullet offline at Banani Road 11 (FR-S3)', async () => {
+    await seedStoryCast(db);
+
+    const [bullet] = await db
+      .select({ isOnline: vehicles.isOnline, lat: vehicles.currentLat, lng: vehicles.currentLng })
+      .from(vehicles);
+    expect(bullet).toEqual({
+      isOnline: false,
+      lat: STORY_VEHICLE.location.lat,
+      lng: STORY_VEHICLE.location.lng,
+    });
+  });
+
+  it('keeps a location Jashim chose when it runs again', async () => {
+    await seedStoryCast(db);
+    await db.update(vehicles).set({ currentLat: 23.7806, currentLng: 90.4163 });
+
+    await seedStoryCast(db);
+    const [bullet] = await db
+      .select({ lat: vehicles.currentLat, lng: vehicles.currentLng })
+      .from(vehicles);
+    expect(bullet).toEqual({ lat: 23.7806, lng: 90.4163 });
   });
 
   it('stores a bcrypt hash of the demo password, never the password itself', async () => {
