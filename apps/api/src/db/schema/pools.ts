@@ -1,5 +1,14 @@
 import { sql } from 'drizzle-orm';
-import { check, pgEnum, pgTable, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import {
+  bigint,
+  check,
+  index,
+  pgEnum,
+  pgTable,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { vehicles } from './vehicles.js';
 
 export const poolStatus = pgEnum('pool_status', ['active', 'finished']);
@@ -10,6 +19,8 @@ export const pools = pgTable(
   'pools',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    // Insertion order: a driver's past trips are sorted and paged by it (NFR-36).
+    seq: bigint('seq', { mode: 'number' }).generatedAlwaysAsIdentity().notNull().unique(),
     vehicleId: uuid('vehicle_id')
       .notNull()
       .references(() => vehicles.id),
@@ -18,6 +29,7 @@ export const pools = pgTable(
     finishedAt: timestamp('finished_at', { withTimezone: true }),
   },
   (t) => [
+    index('pools_vehicle_seq_idx').on(t.vehicleId, t.seq),
     check('pools_finished_at', sql`(${t.status} = 'finished') = (${t.finishedAt} IS NOT NULL)`),
     // A Tesla runs one trip at a time. The database backstop for accepting (FR-C1–C3).
     uniqueIndex('pools_one_active_per_vehicle')

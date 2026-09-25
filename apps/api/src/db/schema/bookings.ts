@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   check,
   index,
   integer,
@@ -30,6 +31,8 @@ export const bookings = pgTable(
   'bookings',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    // Insertion order: a passenger's history is sorted and paged by it (NFR-36).
+    seq: bigint('seq', { mode: 'number' }).generatedAlwaysAsIdentity().notNull().unique(),
     passengerId: uuid('passenger_id')
       .notNull()
       .references(() => users.id),
@@ -61,6 +64,7 @@ export const bookings = pgTable(
   },
   (t) => [
     index('bookings_pool_id_idx').on(t.poolId),
+    index('bookings_passenger_seq_idx').on(t.passengerId, t.seq),
     // Drivers read the open requests, oldest first, every 4 seconds (NFR-3).
     index('bookings_open_requests_idx')
       .on(t.requestedAt)
@@ -121,7 +125,11 @@ export const bookingStatusHistory = pgTable(
     poolId: uuid('pool_id').references(() => pools.id),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('booking_status_history_booking_id_idx').on(t.bookingId)],
+  (t) => [
+    index('booking_status_history_booking_id_idx').on(t.bookingId),
+    // A past trip finds the passengers its driver dropped (phase 8 LLD §4).
+    index('booking_status_history_pool_id_idx').on(t.poolId),
+  ],
 );
 
 export type Booking = typeof bookings.$inferSelect;
