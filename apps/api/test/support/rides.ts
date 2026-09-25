@@ -111,3 +111,36 @@ export async function resetRides(pool: pg.Pool): Promise<void> {
   await pool.query('TRUNCATE bookings, pools CASCADE');
   await pool.query('UPDATE vehicles SET occupied_seats = 0');
 }
+
+// Every trip's route matches its bookings (phase 5 LLD §4): each booking with the driver
+// has one pickup and one drop-off in its trip, the pickup first; nobody else has a stop
+// still to come; and the stops reached come before those still ahead.
+export async function expectRouteMatchesBookings(pool: pg.Pool): Promise<void> {
+  const { rows: missing } = await pool.query(
+    `SELECT b.id FROM bookings b
+     WHERE b.status IN ('ACCEPTED', 'DRIVER_ARRIVED', 'STARTED')
+       AND (
+         SELECT count(*) FILTER (WHERE s.type = 'pickup') <> 1
+           OR count(*) FILTER (WHERE s.type = 'dropoff') <> 1
+           OR max(s.sequence) FILTER (WHERE s.type = 'pickup')
+              > min(s.sequence) FILTER (WHERE s.type = 'dropoff')
+         FROM route_stops s WHERE s.booking_id = b.id AND s.pool_id = b.pool_id
+       )`,
+  );
+  expect(missing, 'bookings without a pickup and a drop-off').toEqual([]);
+
+  const { rows: strays } = await pool.query(
+    `SELECT s.id FROM route_stops s JOIN bookings b ON b.id = s.booking_id
+     WHERE s.reached_at IS NULL
+       AND (b.pool_id IS DISTINCT FROM s.pool_id
+         OR b.status NOT IN ('ACCEPTED', 'DRIVER_ARRIVED', 'STARTED'))`,
+  );
+  expect(strays, 'stops still ahead for bookings not with the driver').toEqual([]);
+
+  const { rows: outOfOrder } = await pool.query(
+    `SELECT pool_id FROM route_stops GROUP BY pool_id
+     HAVING max(sequence) FILTER (WHERE reached_at IS NOT NULL)
+          > min(sequence) FILTER (WHERE reached_at IS NULL)`,
+  );
+  expect(outOfOrder, 'trips with a stop reached after one still ahead').toEqual([]);
+}

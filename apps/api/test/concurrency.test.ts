@@ -10,6 +10,7 @@ import {
   acceptRequest,
   driverAction,
   errorCode,
+  expectRouteMatchesBookings,
   expectSeatsMatchBookings,
   goOnlineAt,
   requestRide,
@@ -125,6 +126,7 @@ describe('the last seat (PRD §14, FR-R3, FR-C1)', () => {
         expect(await historyCount(lost.id)).toBe(1);
         expect(await seatsTaken(pool)).toBe(3);
         await expectSeatsMatchBookings(pool);
+        await expectRouteMatchesBookings(pool);
       }
     },
     RACE_TIMEOUT_MS,
@@ -155,6 +157,7 @@ describe('many accepts into one Tesla (FR-R2, FR-C3)', () => {
         }
         expect(await seatsTaken(pool)).toBe(won);
         await expectSeatsMatchBookings(pool);
+        await expectRouteMatchesBookings(pool);
 
         // The driver retries each one that was told to try again, one at a time.
         for (const [i, r] of results.entries()) {
@@ -163,13 +166,14 @@ describe('many accepts into one Tesla (FR-R2, FR-C3)', () => {
         }
         expect(await seatsTaken(pool)).toBe(3);
         await expectSeatsMatchBookings(pool);
+        await expectRouteMatchesBookings(pool);
       }
     },
     RACE_TIMEOUT_MS,
   );
 
   it(
-    'keeps seats right when accepts race cancels, with no deadlock (FR-C7)',
+    'keeps seats and the route right when accepts race steps and cancels (FR-C7)',
     async () => {
       for (let round = 0; round < ROUNDS; round += 1) {
         await resetRides(pool);
@@ -187,12 +191,14 @@ describe('many accepts into one Tesla (FR-R2, FR-C3)', () => {
           acceptRequest(server, jashim, faridas.id),
           postJson(server, `/api/v1/bookings/${nusrats.id}/cancel`, {}, nusrat),
           driverAction(server, jashim, rafiqs.id, 'cancel'),
+          driverAction(server, jashim, nusrats.id, 'start'),
           postJson(server, `/api/v1/bookings/${rafiqs.id}/cancel`, {}, rafiq),
           postJson(server, `/api/v1/bookings/${shirins.id}/cancel`, {}, shirin),
         ]);
 
         for (const res of responses) expect(res.status).toBeLessThan(500);
         await expectSeatsMatchBookings(pool);
+        await expectRouteMatchesBookings(pool);
         expect(await seatsTaken(pool)).toBeLessThanOrEqual(3);
       }
     },
@@ -234,6 +240,7 @@ describe('one driver per request (FR-R4, FR-C2)', () => {
         );
         expect(taken.reduce((a, b) => a + b, 0)).toBe(1);
         await expectSeatsMatchBookings(pool);
+        await expectRouteMatchesBookings(pool);
       }
     },
     RACE_TIMEOUT_MS,
@@ -262,6 +269,7 @@ describe('one driver per request (FR-R4, FR-C2)', () => {
         expect(await historyCount(nusrats.id)).toBe(2);
         expect(await seatsTaken(pool)).toBe(1);
         await expectSeatsMatchBookings(pool);
+        await expectRouteMatchesBookings(pool);
       }
     },
     RACE_TIMEOUT_MS,
