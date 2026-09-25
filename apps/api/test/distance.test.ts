@@ -12,6 +12,7 @@ import { startFakeOrs, type FakeOrs } from './support/fakeOrs.js';
 
 const BANANI = { lat: 23.7937, lng: 90.4066 };
 const MOHAKHALI = { lat: 23.7781, lng: 90.405 };
+const GULSHAN_1 = { lat: 23.7806, lng: 90.4163 };
 
 let pool: pg.Pool;
 let db: Database;
@@ -41,6 +42,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await db.execute(sql`TRUNCATE ${distanceCache}`);
   ors.hits = 0;
+  ors.matrixHits = 0;
   ors.behave({ kind: 'route', meters: 2345.6 });
 });
 
@@ -148,5 +150,101 @@ describe('road distance (FR-L1, NFR-13)', () => {
       method: 'routed',
     });
     expect(await db.$count(distanceCache)).toBe(1);
+  });
+});
+
+describe("a route's legs (phase 5 LLD §4)", () => {
+  const points = [BANANI, MOHAKHALI, GULSHAN_1];
+
+  it('measures every pair with one matrix request and caches them', async () => {
+    const leg = await service().legKm(points, log);
+
+    expect(ors.matrixHits).toBe(1);
+    expect(ors.lastLocations).toEqual(points.map((point) => [point.lng, point.lat]));
+    expect(leg?.(BANANI, GULSHAN_1)).toEqual({ km: '2.346', method: 'routed' });
+    expect(leg?.(GULSHAN_1, MOHAKHALI)).toEqual({ km: '2.346', method: 'routed' });
+    expect(await db.$count(distanceCache)).toBe(6);
+
+    ors.behave({ kind: 'status', status: 500 });
+    const again = await service().legKm(points, log);
+    expect(again?.(MOHAKHALI, BANANI)).toEqual({ km: '2.346', method: 'routed' });
+    expect(ors.matrixHits).toBe(1);
+  });
+
+  it('asks only about pairs the cache lacks', async () => {
+    await service().roadKm(BANANI, MOHAKHALI, log);
+    await service().roadKm(MOHAKHALI, BANANI, log);
+    ors.behave({ kind: 'route', meters: 1000 });
+
+    const leg = await service().legKm(points, log);
+    expect(leg?.(BANANI, MOHAKHALI).km).toBe('2.346');
+    expect(leg?.(BANANI, GULSHAN_1).km).toBe('1.000');
+    expect(ors.matrixHits).toBe(1);
+  });
+
+  it('asks nothing when every pair is cached, or the points are the same place', async () => {
+    await service().legKm(points, log);
+    ors.matrixHits = 0;
+
+    const leg = await service().legKm([...points, BANANI], log);
+    expect(leg?.(BANANI, BANANI)).toEqual({ km: '0.000', method: 'routed' });
+    expect(await service().legKm([BANANI, BANANI], log)).not.toBeNull();
+    expect(ors.matrixHits).toBe(0);
+  });
+
+  it('refuses a leg it was never asked about', async () => {
+    const leg = await service().legKm([BANANI, MOHAKHALI], log);
+
+    expect(() => leg?.(BANANI, GULSHAN_1)).toThrow();
+  });
+
+  it('falls back for every pair, asking nothing, when no key is set', async () => {
+    const leg = await service({ apiKey: undefined }).legKm(points, log, { remaining: 0 });
+
+    expect(leg?.(BANANI, GULSHAN_1)).toEqual({
+      km: fallbackRoadKm(BANANI, GULSHAN_1),
+      method: 'fallback',
+    });
+    expect(ors.hits).toBe(0);
+  });
+
+  it.each([
+    ['a server error', { kind: 'status', status: 500 }],
+    ['running out of quota', { kind: 'status', status: 429 }],
+    ['a malformed body', { kind: 'body', body: { distances: [[0]] } }],
+  ] as const)('falls back on %s, and caches nothing', async (_name, behaviour) => {
+    ors.behave(behaviour);
+
+    const leg = await service().legKm(points, log);
+    expect(leg?.(MOHAKHALI, GULSHAN_1).method).toBe('fallback');
+    expect(await db.$count(distanceCache)).toBe(0);
+  });
+
+  it('falls back when no answer comes within the timeout', async () => {
+    ors.behave({ kind: 'hang' });
+
+    const leg = await service({ timeoutMs: 200 }).legKm(points, log);
+    expect(leg?.(BANANI, MOHAKHALI).method).toBe('fallback');
+  });
+
+  it('falls back only for the pairs with no route', async () => {
+    const toGulshan = (to: number[]) => to[0] === GULSHAN_1.lng;
+    ors.behave({ kind: 'distances', meters: (_from, to) => (toGulshan(to) ? null : 3000) });
+
+    const leg = await service().legKm(points, log);
+    expect(leg?.(BANANI, GULSHAN_1).method).toBe('fallback');
+    expect(leg?.(GULSHAN_1, BANANI)).toEqual({ km: '3.000', method: 'routed' });
+    expect(await db.$count(distanceCache)).toBe(4);
+  });
+
+  it('spends the budget only on a map request, and waits when it is spent', async () => {
+    const budget = { remaining: 1 };
+
+    expect(await service().legKm([BANANI, MOHAKHALI], log, budget)).not.toBeNull();
+    expect(budget.remaining).toBe(0);
+    expect(await service().legKm(points, log, budget)).toBeNull();
+    expect(ors.matrixHits).toBe(1);
+    // Cached pairs cost nothing.
+    expect(await service().legKm([MOHAKHALI, BANANI], log, budget)).not.toBeNull();
   });
 });
