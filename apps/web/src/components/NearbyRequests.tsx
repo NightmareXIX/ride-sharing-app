@@ -10,10 +10,13 @@ import { primaryButton } from './buttons';
 // assigned automatically (FR-D8).
 export function NearbyRequests({
   requests,
+  freeSeats,
   accepting,
   onAccept,
 }: {
   requests: NearbyRequest[] | null;
+  // Only requests that fit these are listed (FR-D7).
+  freeSeats: number;
   // The request being accepted; every Accept button waits for it (NFR-37).
   accepting: string | null;
   onAccept: (request: NearbyRequest) => void;
@@ -23,16 +26,22 @@ export function NearbyRequests({
       aria-labelledby="nearby-requests-heading"
       className="rounded-xl bg-white p-5 ring-1 ring-slate-200"
     >
-      <h2 id="nearby-requests-heading" className="text-lg font-semibold">
-        Nearby requests
-      </h2>
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 id="nearby-requests-heading" className="text-lg font-semibold">
+          Nearby requests
+        </h2>
+        <p className="text-sm text-slate-500 tabular-nums">
+          {freeSeats} {freeSeats === 1 ? 'seat' : 'seats'} free
+        </p>
+      </div>
       {requests === null ? (
         <p role="status" className="mt-2 text-slate-500">
           Looking for requests…
         </p>
       ) : requests.length === 0 ? (
         <p className="mt-2 text-slate-600">
-          No requests near your Tesla yet. New ones appear here within a few seconds.
+          No requests near your Tesla that fit your free seats yet. New ones appear here within a
+          few seconds.
         </p>
       ) : (
         <ul className="mt-3 divide-y divide-slate-100">
