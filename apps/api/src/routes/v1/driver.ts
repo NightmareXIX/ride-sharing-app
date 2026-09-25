@@ -38,7 +38,8 @@ export function driverRouter(deps: V1Deps): Router {
 
   // Polled every 4 seconds while the driver is online (NFR-3).
   router.get('/requests', async (req, res) => {
-    res.json({ requests: await listNearbyRequests(db, currentSession(req).userId, dispatch) });
+    const driverId = currentSession(req).userId;
+    res.json({ requests: await listNearbyRequests(deps, req.log, driverId, dispatch) });
   });
 
   // Accepting twice returns the same trip (FR-C5, NFR-37).
