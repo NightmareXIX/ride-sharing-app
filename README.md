@@ -5,10 +5,12 @@ Share a seat. Split the fare. Survive Dhaka traffic.
 A ride-pooling MVP. Passengers request rides, and a driver accepts them into a shared Tesla.
 The Tesla never carries more people than it has seats, and every passenger pays their own fare.
 
-> **Status:** phases 0 to 2 are done. People can sign up as a passenger or a driver, and
-> sign in and out. A driver sets their Tesla's location on the map and goes online. A
-> passenger picks a trip on the map, sees the estimated fare, requests the ride and can
-> cancel it while it waits. Drivers accepting requests arrive in phase 3; see
+> **Status:** phases 0 to 3 are done. People can sign up as a passenger or a driver, and
+> sign in and out. A passenger picks a trip on the map, sees the estimated fare and requests
+> the ride. An online driver sees nearby requests and accepts one, then marks arrival,
+> starts the trip and completes it. The final fare is recorded with its full breakdown and
+> paid in cash. Either side can cancel before pickup. One passenger rides at a time; pooling
+> arrives in phase 5. See
 > [the development plan](docs/Dhaka%20Tesla%20Pool%20—%20Development%20Plan.md).
 
 ## Contents
@@ -41,22 +43,24 @@ instant, and it has to keep enough history to explain afterwards exactly what ha
 
 The specs are the source of truth for every phase:
 
-| Document                                                                            | What it holds                                                  |
-| ----------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| [Functional requirements](docs/Dhaka_Tesla_Pool_Functional_Requirements.md)         | FR-\* IDs, booking state machine, fare formulas, consistency   |
-| [Non-functional requirements](docs/Dhaka_Tesla_Pool_Non_Functional_Requirements.md) | NFR-\* IDs: speed, security, reliability, testing, API rules   |
-| [Core entities](docs/Dhaka_Tesla_Pool_Core_Entities.md)                             | Entities and the ERD                                           |
-| [API routes](docs/Dhaka_Tesla_Pool_API_Routes.md)                                   | Every route, grouped by role                                   |
-| [Development plan](docs/Dhaka%20Tesla%20Pool%20—%20Development%20Plan.md)           | Phases 0–9 and the workflow for each phase                     |
-| [Phase 1 LLD: accounts](docs/lld/phase-1-accounts.md)                               | Tables, sessions, routes and tests for sign-up and sign-in     |
-| [Phase 2 LLD: ride requests](docs/lld/phase-2-ride-request.md)                      | Availability, road distance, fare estimate, request and cancel |
+| Document                                                                            | What it holds                                                         |
+| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| [Functional requirements](docs/Dhaka_Tesla_Pool_Functional_Requirements.md)         | FR-\* IDs, booking state machine, fare formulas, consistency          |
+| [Non-functional requirements](docs/Dhaka_Tesla_Pool_Non_Functional_Requirements.md) | NFR-\* IDs: speed, security, reliability, testing, API rules          |
+| [Core entities](docs/Dhaka_Tesla_Pool_Core_Entities.md)                             | Entities and the ERD                                                  |
+| [API routes](docs/Dhaka_Tesla_Pool_API_Routes.md)                                   | Every route, grouped by role                                          |
+| [Development plan](docs/Dhaka%20Tesla%20Pool%20—%20Development%20Plan.md)           | Phases 0–9 and the workflow for each phase                            |
+| [Phase 1 LLD: accounts](docs/lld/phase-1-accounts.md)                               | Tables, sessions, routes and tests for sign-up and sign-in            |
+| [Phase 2 LLD: ride requests](docs/lld/phase-2-ride-request.md)                      | Availability, road distance, fare estimate, request and cancel        |
+| [Phase 3 LLD: driver flow](docs/lld/phase-3-driver-flow.md)                         | Nearby requests, accept, arrive, start, complete, cancels, final fare |
 
 - Architecture: [docs/Architecture Diagram-selection.png](docs/Architecture%20Diagram-selection.png)
 - ERD: [docs/Dhaka Tesla Pool ERD-selection.png](docs/Dhaka%20Tesla%20Pool%20ERD-selection.png)
 
 The ERD shows the target schema. The database grows one migration per phase, so today it
-holds `users`, `wallets`, `vehicles` (with online status and location), `bookings`,
-`booking_status_history` and `distance_cache`.
+holds `users`, `wallets`, `vehicles` (with online status and location), `pools`,
+`bookings` (with their lifecycle times), `booking_status_history`, `fares` and
+`distance_cache`.
 
 The browser talks only to the Next.js site. The site proxies `/api/v1/*` to the Express
 API, so the login cookie is first-party even though the two run on different hosts.
@@ -105,7 +109,7 @@ apps/
       config.ts        env validation
       http/            error envelope and middleware (request log, auth, role checks)
       auth/            password hashing and the signed session cookie
-      domain/          pure rules with no I/O: fare formula, booking state machine
+      domain/          pure rules with no I/O: fares, booking state machine, dispatch
       geo/             Dhaka service area, OpenRouteService client, ×1.3 fallback
       services/        business rules and transactions, called by the routes
       routes/          /health and /api/v1
@@ -165,20 +169,21 @@ npm run dev -w @tesla-pool/web       # http://localhost:3000, in a second termin
 All of them are listed in [.env.example](.env.example) with safe local defaults. Real
 secrets live only in the hosting platforms' settings (NFR-11).
 
-| Variable                                            | Used by     | Purpose                                                                  |
-| --------------------------------------------------- | ----------- | ------------------------------------------------------------------------ |
-| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | compose     | Database credentials; compose also builds the API's URL from them        |
-| `POSTGRES_PORT`, `API_PORT`, `WEB_PORT`             | compose     | Host ports                                                               |
-| `DATABASE_URL`                                      | api         | Postgres connection string (`postgres://…`)                              |
-| `PORT`                                              | api         | HTTP port, default 4000                                                  |
-| `NODE_ENV`                                          | api         | `development` turns on pretty logs                                       |
-| `LOG_LEVEL`                                         | api         | pino level, default `info`                                               |
-| `SESSION_SECRET`                                    | api         | Signs the login cookie; at least 32 characters. Required.                |
-| `COOKIE_SECURE`                                     | api         | `Secure` cookie flag; defaults to on when `NODE_ENV=production`          |
-| `ORS_API_KEY`                                       | api         | OpenRouteService key. Optional: unset means straight-line distance × 1.3 |
-| `ORS_BASE_URL`                                      | api         | OpenRouteService address, default `https://api.openrouteservice.org`     |
-| `TEST_DATABASE_URL`                                 | api tests   | Separate test database, created automatically if missing                 |
-| `API_URL`                                           | web (build) | Where the proxy sends `/api/v1/*`. It's read at **build** time.          |
+| Variable                                            | Used by     | Purpose                                                                          |
+| --------------------------------------------------- | ----------- | -------------------------------------------------------------------------------- |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | compose     | Database credentials; compose also builds the API's URL from them                |
+| `POSTGRES_PORT`, `API_PORT`, `WEB_PORT`             | compose     | Host ports                                                                       |
+| `DATABASE_URL`                                      | api         | Postgres connection string (`postgres://…`)                                      |
+| `PORT`                                              | api         | HTTP port, default 4000                                                          |
+| `NODE_ENV`                                          | api         | `development` turns on pretty logs                                               |
+| `LOG_LEVEL`                                         | api         | pino level, default `info`                                                       |
+| `SESSION_SECRET`                                    | api         | Signs the login cookie; at least 32 characters. Required.                        |
+| `COOKIE_SECURE`                                     | api         | `Secure` cookie flag; defaults to on when `NODE_ENV=production`                  |
+| `ORS_API_KEY`                                       | api         | OpenRouteService key. Optional: unset means straight-line distance × 1.3         |
+| `ORS_BASE_URL`                                      | api         | OpenRouteService address, default `https://api.openrouteservice.org`             |
+| `DRIVER_SEARCH_RADIUS_KM`                           | api         | How far (straight line) from their Tesla an idle driver sees requests, default 2 |
+| `TEST_DATABASE_URL`                                 | api tests   | Separate test database, created automatically if missing                         |
+| `API_URL`                                           | web (build) | Where the proxy sends `/api/v1/*`. It's read at **build** time.                  |
 
 ## Migrations and seed data
 
@@ -226,6 +231,19 @@ Covered so far:
 - Access: another passenger's booking is 404; drivers get 403 on passenger routes
 - Cancel: free while waiting, safe to repeat, and logged in a history the database won't
   let anyone edit or delete
+- Nearby requests: hidden from offline and busy drivers, and outside the search radius or
+  the Tesla's seats; oldest first; never naming the passenger
+- Accept: opens a trip with its history row; a repeat returns the same trip; a second
+  driver gets `ALREADY_CLAIMED`; offline, busy and out-of-range accepts refused
+- Trip steps: arrive, start and complete in order, each repeat harmless, skipped steps
+  refused, another driver's passenger 404
+- Final fare: the FR §8 pooled examples (116.00, 174.00, 182.70), capped at the estimate,
+  stored with its breakdown in a table the database won't let anyone change
+- Driver cancel: the request returns to waiting for every driver, keeping its pool in the
+  history; not allowed once the passenger is aboard
+- Passenger cancel after acceptance: free within 3 minutes and recorded as `late_cancel`
+  after, by the database clock; refused once the trip starts
+- A driver with a passenger can't go offline or move their Tesla
 
 ## Demo credentials
 
@@ -242,9 +260,12 @@ Sign in at http://localhost:3000/login. Jashim drives the Tesla "Bullet" (3 seat
 starts offline at Banani Road 11. Every wallet starts at ৳ 0.00; top-ups arrive with
 TeslaPay in phase 6, so ride requests use Cash until then.
 
-To try phase 2: sign in as Jashim and go online. In another browser, sign in as Nusrat,
-choose Banani Road 11 → Mohakhali, get the estimate and request the ride. Nusrat can cancel
-it while it waits.
+To try a ride: sign in as Jashim and go online. In another browser, sign in as Nusrat,
+choose Banani Road 11 → Mohakhali, get the estimate and request the ride. Within a few
+seconds it appears in Jashim's nearby requests. Accept it, then tap **Arrived at pickup**,
+**start trip** and **complete trip**. Nusrat's screen follows each step and ends with the
+fare to pay in cash and how it was worked out. To see a driver cancel, tap **Cancel ride**
+before starting: the request goes back to waiting and Nusrat is told why.
 
 ## API overview
 
@@ -287,6 +308,24 @@ A route for the other role returns 403, and no session returns 401. `/me` also r
 passenger's `currentBooking`. Shapes and rules are in the
 [phase 2 LLD](docs/lld/phase-2-ride-request.md#3-routes).
 
+Driver flow (phase 3), all under `/api/v1`:
+
+| Method | Route                           | Who    | Does                                                                               | Errors                                                                                                                       |
+| ------ | ------------------------------- | ------ | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/driver/requests`              | driver | Open requests near an online, idle Tesla, oldest first; polled every 4 s           | —                                                                                                                            |
+| POST   | `/driver/requests/:id/accept`   | driver | Accepts the request into a new trip; a repeat returns the same trip                | 404, 409 `ALREADY_CLAIMED`, 409 `SEATS_UNAVAILABLE`, 409 `INVALID_TRANSITION`, 422 `DRIVER_OFFLINE`, 422 `NO_LONGER_MATCHES` |
+| GET    | `/driver/pool`                  | driver | The trip in progress: each passenger, their seats, status and next step, or `null` | —                                                                                                                            |
+| POST   | `/driver/bookings/:id/arrive`   | driver | ACCEPTED → DRIVER_ARRIVED                                                          | 404, 409 `INVALID_TRANSITION`                                                                                                |
+| POST   | `/driver/bookings/:id/start`    | driver | DRIVER_ARRIVED → STARTED                                                           | 404, 409 `INVALID_TRANSITION`                                                                                                |
+| POST   | `/driver/bookings/:id/complete` | driver | STARTED → COMPLETED; records and returns the fare                                  | 404, 409 `INVALID_TRANSITION`                                                                                                |
+| POST   | `/driver/bookings/:id/cancel`   | driver | Before pickup: the request goes back to waiting for any driver                     | 404, 409 `INVALID_TRANSITION`                                                                                                |
+
+Phase 3 also changes three phase 2 routes. Going offline or moving the Tesla returns 409
+`HAS_ACTIVE_BOOKINGS` while it has a passenger. A passenger can cancel until the trip
+starts. The booking body gains the driver and Tesla, each step's time, `freeCancelUntil`, a
+`notice` after a driver cancel, and the `fare` breakdown once completed. Shapes and rules
+are in the [phase 3 LLD](docs/lld/phase-3-driver-flow.md#3-routes).
+
 Every error has the same shape (NFR-35):
 
 ```json
@@ -315,6 +354,16 @@ request's log line (NFR-42).
 - **Two rules arrive early.** One active booking per passenger (FR-C6) and the balance
   checks (FR-W3, FR-W7) were planned for phases 4 and 6. They are enforced from phase 2
   because creating a request depends on them.
+- **One passenger per Tesla until pooling.** A driver sees requests and can accept only
+  while idle. Phase 5 replaces this with the matching rule (FR-L3).
+- **Nearby means a straight line.** The 2 km search radius is measured as the crow flies
+  from the Tesla, so refreshing the list never waits on the map service.
+- **A single ride's odometer.** Until route stops exist (phase 5), a ride runs straight
+  from pickup (0 km) to destination (its direct km) with nothing shared, so the final fare
+  equals the estimate.
+- **Stop searching.** After a driver cancel, the passenger's request waits again and their
+  screen says why. Cancelling a waiting request is free, which serves as the "stop
+  searching" option FR §13 left to the design.
 
 ## Known limitations
 
@@ -332,6 +381,10 @@ the full list. Specific to the current state:
 - Map tiles come from the public OpenStreetMap servers, which suit a demo but not heavy use.
 - drizzle-kit, a dev-only tool, pulls in an old esbuild that `npm audit` flags. It never
   reaches the Docker images.
+- A late passenger cancel is recorded as `late_cancel` but not fined yet, and a late
+  driver cancel leaves no penalty record. Both need the wallet ledger (phase 6).
+- Completing a ride records the fare, but no money moves: cash is paid in person and the
+  ledger entries arrive in phase 6.
 
 ## Still to come
 
