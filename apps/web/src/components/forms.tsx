@@ -76,3 +76,52 @@ export function SubmitButton({ pending, children }: { pending: boolean; children
     </button>
   );
 }
+
+// A set of radio buttons shown as a row of toggle buttons.
+export function ChoiceGroup<T extends string>({
+  name,
+  legend,
+  options,
+  value,
+  onChange,
+  error,
+  hint,
+}: {
+  name: string;
+  legend: string;
+  options: ReadonlyArray<{ value: T; label: ReactNode }>;
+  value?: T;
+  onChange?: (value: T) => void;
+  error?: string;
+  hint?: string;
+}) {
+  const errorId = `field-${name}-error`;
+  return (
+    <fieldset aria-describedby={error ? errorId : undefined}>
+      <legend className="mb-1.5 block text-sm font-medium text-slate-700">{legend}</legend>
+      <div className="grid grid-cols-2 gap-2">
+        {options.map((option) => (
+          <label
+            key={option.value}
+            className="flex cursor-pointer items-center justify-center rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-center text-sm font-medium text-slate-700 transition has-checked:border-slate-900 has-checked:bg-slate-900 has-checked:text-white has-focus-visible:ring-2 has-focus-visible:ring-slate-900/30"
+          >
+            <input
+              type="radio"
+              name={name}
+              value={option.value}
+              className="sr-only"
+              checked={value === undefined ? undefined : value === option.value}
+              onChange={() => onChange?.(option.value)}
+            />
+            {option.label}
+          </label>
+        ))}
+      </div>
+      {error ? (
+        <FieldError id={errorId} message={error} />
+      ) : (
+        hint && <p className="mt-1.5 text-sm text-slate-500">{hint}</p>
+      )}
+    </fieldset>
+  );
+}
