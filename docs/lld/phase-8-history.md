@@ -125,7 +125,7 @@ One finished trip: the summary above, the Tesla's name, and every passenger.
 - Entries are in the order they ended.
 - The driver sees each passenger's name and fare, as the live trip already shows (FR-D14, API Routes §9). A passenger's gender and fine aren't sent.
 - A trip of another driver, a trip that doesn't exist, and the trip still in progress are all `404 NOT_FOUND` (NFR-8).
-- A malformed id is `400 VALIDATION_ERROR`, as for bookings.
+- An id that isn't a UUID can't be anyone's trip, so it is `404` too, as for bookings.
 
 ### `GET /driver/earnings`: driver only
 

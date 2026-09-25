@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { currentSession, requireAuth, requireRole } from '../../http/middleware/auth.js';
+import { parsePageQuery } from '../../http/pagination.js';
+import { getPastTrip, listDriverTrips } from '../../services/history.js';
 import {
   acceptRequest,
   completeTrip,
@@ -12,9 +14,9 @@ import {
 import { listNearbyRequests } from '../../services/requests.js';
 import { getDriverVehicle, goOffline, goOnline, setLocation } from '../../services/vehicles.js';
 import type { V1Deps } from './index.js';
-import { bookingId, location } from './schemas.js';
+import { bookingId, location, poolId } from './schemas.js';
 
-// The driver's Tesla, availability and rides (API Routes §6–8). Drivers only (NFR-8).
+// The driver's Tesla, availability, rides and history (API Routes §6–9). Drivers only (NFR-8).
 export function driverRouter(deps: V1Deps): Router {
   const { db, session, dispatch } = deps;
   const router = Router();
@@ -83,6 +85,19 @@ export function driverRouter(deps: V1Deps): Router {
   router.post('/bookings/:id/no-show', async (req, res) => {
     const id = bookingId(req.params.id);
     res.json({ pool: await markNoShow(deps, req.log, currentSession(req).userId, id) });
+  });
+
+  // Finished trips, newest first, in pages (FR-D15, NFR-36). The trip in progress is /pool.
+  router.get('/pools', async (req, res) => {
+    const page = parsePageQuery(req.query);
+    const { items, nextCursor } = await listDriverTrips(db, currentSession(req).userId, page);
+    res.json({ pools: items, nextCursor });
+  });
+
+  // One finished trip with its passengers and fares.
+  router.get('/pools/:id', async (req, res) => {
+    const id = poolId(req.params.id);
+    res.json({ pool: await getPastTrip(db, currentSession(req).userId, id) });
   });
 
   return router;
