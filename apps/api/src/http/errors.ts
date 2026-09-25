@@ -21,7 +21,9 @@ export type ErrorCode =
   | 'NO_LONGER_MATCHES'
   | 'DRIVER_OFFLINE'
   // Seats and concurrency (phase 4)
-  | 'POOL_CHANGED';
+  | 'POOL_CHANGED'
+  // Pooling (phase 5)
+  | 'OUT_OF_STOP_ORDER';
 
 // Every error response has this shape (NFR-35).
 export interface ErrorBody {

@@ -3,10 +3,11 @@ import { expect } from 'vitest';
 import { getJson, postJson, sendJson } from './accounts.js';
 import type { TestServer } from './server.js';
 
-// Story places (phase 2 quick picks). Mohakhali and Gulshan 1 are under 2 km from Banani
-// in a straight line; Uttara is far outside any driver's radius there.
+// Story places (the quick picks). Mohakhali and Gulshan 1 are under 2 km from Banani in a
+// straight line; Uttara is far outside any driver's radius there. Mohakhali is at Wireless
+// Gate, where the road to Gulshan 1 begins, so Nusrat and Rafiq pool (phase 5 LLD §7).
 export const BANANI = { lat: 23.7937, lng: 90.4066, label: 'Banani Road 11' };
-export const MOHAKHALI = { lat: 23.7781, lng: 90.405, label: 'Mohakhali' };
+export const MOHAKHALI = { lat: 23.7812, lng: 90.409, label: 'Mohakhali' };
 export const GULSHAN_1 = { lat: 23.7806, lng: 90.4163, label: 'Gulshan 1' };
 export const UTTARA = { lat: 23.8759, lng: 90.3795, label: 'Uttara' };
 

@@ -14,7 +14,8 @@ import type { V1Deps } from './index.js';
 import { bookingId, location } from './schemas.js';
 
 // The driver's Tesla, availability and rides (API Routes §6–8). Drivers only (NFR-8).
-export function driverRouter({ db, session, dispatch }: V1Deps): Router {
+export function driverRouter(deps: V1Deps): Router {
+  const { db, session, dispatch } = deps;
   const router = Router();
   router.use(requireAuth(session.secret), requireRole('driver'));
 
@@ -43,7 +44,8 @@ export function driverRouter({ db, session, dispatch }: V1Deps): Router {
   // Accepting twice returns the same trip (FR-C5, NFR-37).
   router.post('/requests/:bookingId/accept', async (req, res) => {
     const id = bookingId(req.params.bookingId);
-    res.json({ pool: await acceptRequest(db, currentSession(req).userId, id, dispatch) });
+    const driverId = currentSession(req).userId;
+    res.json({ pool: await acceptRequest(deps, req.log, driverId, id, dispatch) });
   });
 
   // The trip in progress, polled every 4 seconds (NFR-3).
@@ -68,10 +70,11 @@ export function driverRouter({ db, session, dispatch }: V1Deps): Router {
     res.json(await completeTrip(db, currentSession(req).userId, id));
   });
 
-  // Before pickup only. The request goes back to other drivers (FR-D12).
+  // Before pickup only. The request goes back to other drivers, and the route is re-planned
+  // without it (FR-D12).
   router.post('/bookings/:id/cancel', async (req, res) => {
     const id = bookingId(req.params.id);
-    res.json({ pool: await driverCancel(db, currentSession(req).userId, id) });
+    res.json({ pool: await driverCancel(deps, req.log, currentSession(req).userId, id) });
   });
 
   return router;

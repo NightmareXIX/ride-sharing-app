@@ -13,7 +13,6 @@ import {
 import { TEST_DATABASE_URL } from './support/db.js';
 import {
   BANANI,
-  GULSHAN_1,
   UTTARA,
   acceptRequest,
   errorCode,
@@ -169,7 +168,7 @@ describe('POST /driver/requests/:id/accept (FR-D8, FR-R4)', () => {
   it('adds a second ride to the trip while seats are free (FR-R1)', async () => {
     await goOnlineAt(server, driver);
     const first = await requestRide(server, nusrat);
-    const second = await requestRide(server, rafiq, tripFrom(GULSHAN_1));
+    const second = await requestRide(server, rafiq, tripFrom());
     const trip = (await (await acceptRequest(server, driver, first.id)).json()) as TripBody;
 
     // Still listed: Bullet has two seats left.

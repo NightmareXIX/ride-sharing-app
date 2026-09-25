@@ -1,7 +1,9 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Database } from '../src/db/client.js';
-import { checkAccept, commitAccept } from '../src/services/pools.js';
+import { pino } from 'pino';
+import { createDistanceService } from '../src/geo/distance.js';
+import { checkAccept, commitAccept, type TripDeps } from '../src/services/pools.js';
 import {
   driverSignUp,
   getJson,
@@ -14,7 +16,7 @@ import {
 import { TEST_DATABASE_URL } from './support/db.js';
 import {
   BANANI,
-  GULSHAN_1,
+  MOHAKHALI,
   acceptRequest,
   driverAction,
   errorCode,
@@ -25,12 +27,14 @@ import {
   seatsTaken,
   tripFrom,
 } from './support/rides.js';
-import { startTestServer, type TestServer } from './support/server.js';
+import { NO_ROUTING, startTestServer, type TestServer } from './support/server.js';
 
 const DISPATCH = { searchRadiusKm: 2 };
+const log = pino({ level: 'silent' });
 
 let pool: pg.Pool;
 let db: Database;
+let deps: TripDeps;
 let server: TestServer;
 let driver: string;
 let nusrat: string;
@@ -44,6 +48,7 @@ interface TripBody {
 beforeAll(async () => {
   pool = createPool(TEST_DATABASE_URL);
   db = createDb(pool);
+  deps = { db, distance: createDistanceService(db, NO_ROUTING) };
   server = await startTestServer(pool);
 });
 
@@ -98,7 +103,7 @@ describe("Bullet's seat limit (FR-R2, FR-C1)", () => {
     expect(trip.pool?.seats).toEqual({ capacity: 3, taken: 3 });
 
     // Bullet is full: Shirin's request isn't listed, and accepting it anyway is refused.
-    const shirins = await requestRide(server, shirin, tripFrom(GULSHAN_1));
+    const shirins = await requestRide(server, shirin, tripFrom());
     expect(await nearbyRequestIds(server, driver)).toEqual([]);
     const refused = await acceptRequest(server, driver, shirins.id);
     expect(refused.status).toBe(409);
@@ -113,7 +118,7 @@ describe("Bullet's seat limit (FR-R2, FR-C1)", () => {
   it('lists only requests that fit the free seats', async () => {
     await rafiqAboardWithTwoSeats();
     const two = await requestRide(server, nusrat, tripFrom(BANANI, { seats: 2 }));
-    const one = await requestRide(server, shirin, tripFrom(GULSHAN_1));
+    const one = await requestRide(server, shirin, tripFrom());
 
     expect(await nearbyRequestIds(server, driver)).toEqual([one.id]);
     const refused = await acceptRequest(server, driver, two.id);
@@ -156,18 +161,26 @@ describe('freeing seats', () => {
     const rafiqs = await rafiqAboardWithTwoSeats();
     const nusrats = await requestRide(server, nusrat);
     await acceptRequest(server, driver, nusrats.id);
-    for (const action of ['arrive', 'start', 'complete'] as const) {
-      expect((await driverAction(server, driver, nusrats.id, action)).status).toBe(200);
+    // The stops come in order: both pickups, then Rafiq's drop-off first (phase 5).
+    for (const [booking, action] of [
+      [rafiqs, 'arrive'],
+      [rafiqs, 'start'],
+      [nusrats, 'arrive'],
+      [nusrats, 'start'],
+      [rafiqs, 'complete'],
+    ] as const) {
+      expect((await driverAction(server, driver, booking.id, action)).status).toBe(200);
     }
 
-    expect(await seatsTaken(pool)).toBe(2);
-    const shirins = await requestRide(server, shirin, tripFrom(GULSHAN_1));
+    // The route goes on from Mohakhali now, so a ride from there fits it.
+    expect(await seatsTaken(pool)).toBe(1);
+    const shirins = await requestRide(server, shirin, tripFrom(MOHAKHALI));
     expect(await nearbyRequestIds(server, driver)).toEqual([shirins.id]);
 
     // A repeated complete frees nothing more.
-    expect((await driverAction(server, driver, nusrats.id, 'complete')).status).toBe(200);
-    expect(await seatsTaken(pool)).toBe(2);
-    expect(await statusOf(rafiqs.id)).toBe('ACCEPTED');
+    expect((await driverAction(server, driver, rafiqs.id, 'complete')).status).toBe(200);
+    expect(await seatsTaken(pool)).toBe(1);
+    expect(await statusOf(nusrats.id)).toBe('STARTED');
     await expectSeatsMatchBookings(pool);
   });
 
@@ -216,7 +229,7 @@ describe('freeing seats', () => {
 describe('accepting from an out-of-date view (FR-C3)', () => {
   it('refuses when the Tesla changed after the check', async () => {
     const nusrats = await requestRide(server, nusrat);
-    const snapshot = await checkAccept(db, await jashimId(), nusrats.id, DISPATCH);
+    const snapshot = await checkAccept(deps, log, await jashimId(), nusrats.id, DISPATCH);
     if (!snapshot) throw new Error('Expected a fresh accept');
 
     // Setting the same location again still counts as a change.
@@ -241,10 +254,10 @@ describe('accepting from an out-of-date view (FR-C3)', () => {
   it('says the seat is gone when another accept took it first', async () => {
     await rafiqAboardWithTwoSeats();
     const nusrats = await requestRide(server, nusrat);
-    const shirins = await requestRide(server, shirin, tripFrom(GULSHAN_1));
+    const shirins = await requestRide(server, shirin, tripFrom());
 
     // Both see one seat left (PRD §14); Shirin's accept commits first.
-    const snapshot = await checkAccept(db, await jashimId(), nusrats.id, DISPATCH);
+    const snapshot = await checkAccept(deps, log, await jashimId(), nusrats.id, DISPATCH);
     if (!snapshot) throw new Error('Expected a fresh accept');
     expect((await acceptRequest(server, driver, shirins.id)).status).toBe(200);
 

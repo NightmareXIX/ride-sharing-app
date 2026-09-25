@@ -20,12 +20,14 @@ import {
   type PaymentMethod,
 } from '../domain/booking.js';
 import { estimateFare, type FareEstimate, type RideOption } from '../domain/fare.js';
+import type { PlannedStop } from '../domain/route.js';
 import type { DistanceMethod, DistanceService } from '../geo/distance.js';
 import type { LatLng } from '../geo/serviceArea.js';
 import { AppError } from '../http/errors.js';
 import type { Logger } from '../logger.js';
 import { fareColumns, toFareBreakdown, type FareBreakdown } from './fares.js';
 import { finishPoolIfDone, releaseSeats } from './pools.js';
+import { readTripRoute, replanWithout, ROUTE_ATTEMPTS, writePlan } from './routes.js';
 import { transitionBooking } from './transitions.js';
 
 export interface RideDeps {
@@ -328,31 +330,67 @@ async function teslaOf(tx: Transaction, bookingId: string, owner: SQL): Promise<
   return row?.vehicleId ?? null;
 }
 
-// A booking can change Tesla between finding it and locking it only if a driver hands it
-// back and another accepts it at that moment; trying again is enough.
-const CANCEL_ATTEMPTS = 3;
+// What a cancel is planned from, read before the transaction: the Tesla carrying the
+// booking and its version, and the route once the booking leaves it.
+interface CancelPlan {
+  vehicleId: string | null;
+  version: number | null;
+  unreached: PlannedStop[] | null;
+}
+
+async function planCancel(
+  { db, distance }: RideDeps,
+  log: Logger,
+  bookingId: string,
+  owner: SQL,
+): Promise<CancelPlan> {
+  const [row] = await db
+    .select({
+      status: bookings.status,
+      poolId: bookings.poolId,
+      vehicleId: vehicles.id,
+      version: vehicles.version,
+      lat: vehicles.currentLat,
+      lng: vehicles.currentLng,
+    })
+    .from(bookings)
+    .leftJoin(pools, eq(pools.id, bookings.poolId))
+    .leftJoin(vehicles, eq(vehicles.id, pools.vehicleId))
+    .where(and(eq(bookings.id, bookingId), owner));
+  const plan = { vehicleId: row?.vehicleId ?? null, version: row?.version ?? null };
+  if (!row?.poolId || !isAssigned(row.status) || row.lat === null || row.lng === null) {
+    return { ...plan, unreached: null };
+  }
+  const route = await readTripRoute(db, row.poolId, { lat: row.lat, lng: row.lng });
+  return { ...plan, unreached: await replanWithout(route, bookingId, distance, log) };
+}
 
 // A passenger cancels any time before the trip starts (FR-P7). It is free while waiting
 // and for 3 minutes after acceptance; later it is recorded as a late cancel, measured by
-// the database clock (FR-R9, NFR-38). Phase 6 adds the fine. Pressing Cancel twice is
-// harmless (NFR-37).
+// the database clock (FR-R9, NFR-38). Phase 6 adds the fine. The booking's stops leave the
+// driver's route, and the rest is re-planned. Pressing Cancel twice is harmless (NFR-37).
 export async function cancelRide(
-  db: Database,
+  deps: RideDeps,
+  log: Logger,
   passengerId: string,
   bookingId: string,
 ): Promise<BookingView> {
+  const { db } = deps;
   const owner = eq(bookings.passengerId, passengerId);
-  const cancelOnce = () =>
-    db.transaction(async (tx) => {
+  const cancelOnce = async () => {
+    // The new route is measured before any lock is taken (NFR-2).
+    const plan = await planCancel(deps, log, bookingId, owner);
+    return db.transaction(async (tx) => {
       // The Tesla is locked before the booking, the order every driver action uses, so a
-      // cancel and a driver action can't deadlock (FR-C7).
-      const vehicleId = await teslaOf(tx, bookingId, owner);
-      if (vehicleId) {
-        await tx
-          .select({ id: vehicles.id })
+      // cancel and a driver action can't deadlock (FR-C7). If its trip changed since the
+      // plan, the plan is stale.
+      if (plan.vehicleId) {
+        const [tesla] = await tx
+          .select({ version: vehicles.version })
           .from(vehicles)
-          .where(eq(vehicles.id, vehicleId))
+          .where(eq(vehicles.id, plan.vehicleId))
           .for('update');
+        if (tesla?.version !== plan.version) return 'moved' as const;
       }
 
       const [timing] = await tx
@@ -363,7 +401,7 @@ export async function cancelRide(
         .where(and(eq(bookings.id, bookingId), owner))
         .for('update');
       const holder = await teslaOf(tx, bookingId, owner);
-      if (holder !== null && holder !== vehicleId) return 'moved' as const;
+      if (holder !== null && holder !== plan.vehicleId) return 'moved' as const;
 
       const result = await transitionBooking(tx, {
         bookingId,
@@ -374,19 +412,25 @@ export async function cancelRide(
         reason: timing?.late ? 'late_cancel' : 'passenger_cancel',
         set: { cancelledAt: sql`now()` },
       });
-      if (result.ok && holder !== null && isAssigned(result.from)) {
+      if (result.ok && holder !== null && result.poolId && isAssigned(result.from)) {
+        // A booking that was waiting when planned always has a plan; this is a safeguard.
+        if (!plan.unreached) throw new Error(`Booking ${bookingId} left a trip unplanned`);
         await releaseSeats(tx, holder, result.seats);
+        await writePlan(tx, result.poolId, plan.unreached);
       }
       // The driver's trip ends if this was its only passenger (FR-R7).
       if (result.ok && result.poolId) await finishPoolIfDone(tx, result.poolId);
       return result;
     });
+  };
 
   let outcome = await cancelOnce();
-  for (let attempt = 1; outcome === 'moved' && attempt < CANCEL_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; outcome === 'moved' && attempt < ROUTE_ATTEMPTS; attempt += 1) {
     outcome = await cancelOnce();
   }
-  if (outcome === 'moved') throw new Error(`Booking ${bookingId} kept changing Tesla`);
+  if (outcome === 'moved') {
+    throw new AppError(409, 'POOL_CHANGED', 'Your ride changed at the same moment. Try again.');
+  }
 
   if (outcome.ok || outcome.current === 'CANCELLED') {
     return getBooking(db, passengerId, bookingId);
