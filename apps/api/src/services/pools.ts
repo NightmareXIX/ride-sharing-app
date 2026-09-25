@@ -5,6 +5,7 @@ import type { Database, Transaction } from '../db/client.js';
 import {
   bookings,
   bookingStatusHistory,
+  driverPenalties,
   fares,
   pools,
   routeStops,
@@ -13,6 +14,7 @@ import {
 } from '../db/schema/index.js';
 import {
   ASSIGNED_STATUSES,
+  FREE_CANCEL_WINDOW,
   isAssigned,
   NO_SHOW_WAIT,
   type AssignedStatus,
@@ -80,6 +82,10 @@ export interface TripBooking {
   // before arrival. canNoShow says whether that time has come, by the database clock.
   noShowFrom: Date | null;
   canNoShow: boolean;
+  // Cancelling after this records a penalty against the driver (FR-D13);
+  // cancelRecordsPenalty says whether that time has come, by the database clock.
+  penaltyFrom: Date;
+  cancelRecordsPenalty: boolean;
 }
 
 // One stop on the driver's route, in order (FR-D14, FR-L5).
@@ -108,6 +114,10 @@ export interface DriverTrip {
 }
 
 const noShowWait = sql.raw(`interval '${NO_SHOW_WAIT}'`);
+const freeCancelWindow = sql.raw(`interval '${FREE_CANCEL_WINDOW}'`);
+
+// A driver cancel this long after acceptance is late: the same 3 minutes a passenger gets.
+const lateAfterAccept = sql<boolean>`coalesce(now() > ${bookings.acceptedAt} + ${freeCancelWindow}, false)`;
 
 // The stop each step happens at.
 const STEP_STOPS: Record<NextAction, StopType> = {
@@ -188,6 +198,10 @@ export async function getDriverTrip(db: Database, driverId: string): Promise<Dri
         bookings.arrivedAt,
       ),
       canNoShow: sql<boolean>`${bookings.status} = 'DRIVER_ARRIVED' AND now() >= ${bookings.arrivedAt} + ${noShowWait}`,
+      penaltyFrom: sql<Date | null>`${bookings.acceptedAt} + ${freeCancelWindow}`.mapWith(
+        bookings.acceptedAt,
+      ),
+      cancelRecordsPenalty: lateAfterAccept,
     })
     .from(bookings)
     .innerJoin(users, eq(users.id, bookings.passengerId))
@@ -195,9 +209,9 @@ export async function getDriverTrip(db: Database, driverId: string): Promise<Dri
     .orderBy(asc(bookings.acceptedAt), asc(bookings.id));
 
   const trip = rows.flatMap((row): TripBooking[] => {
-    const { status, acceptedAt } = row;
+    const { status, acceptedAt, penaltyFrom } = row;
     // Only assigned bookings are selected, and those always have an accept time.
-    if (!isAssigned(status) || !acceptedAt) return [];
+    if (!isAssigned(status) || !acceptedAt || !penaltyFrom) return [];
     const action = nextAction(status);
     return [
       {
@@ -218,6 +232,9 @@ export async function getDriverTrip(db: Database, driverId: string): Promise<Dri
         canAct: isNext(row.id, STEP_STOPS[action]),
         noShowFrom: row.noShowFrom,
         canNoShow: row.canNoShow,
+        penaltyFrom,
+        // Only a booking not yet aboard can be cancelled at all.
+        cancelRecordsPenalty: status !== 'STARTED' && row.cancelRecordsPenalty,
       },
     ];
   });
@@ -868,7 +885,8 @@ async function planLeaving(
 // The driver drops a passenger before pickup (FR-D12). The request goes back to REQUESTED,
 // visible to every driver again, and keeps its place in the queue. Its seats are freed,
 // its stops leave the route and the rest is re-planned, and the history keeps the pool it
-// left. The penalty for a late cancel (FR-D13) arrives in phase 6.
+// left. More than 3 minutes after accepting, by the database clock, a penalty is recorded
+// against the driver in the same transaction (FR-D13, NFR-38).
 export async function driverCancel(
   deps: TripDeps,
   log: Logger,
@@ -880,9 +898,16 @@ export async function driverCancel(
     const { version, unreached } = await planLeaving(deps, log, driverId, bookingId);
     await db.transaction(async (tx) => {
       const vehicleId = await lockTesla(tx, driverId, version);
+      const owner = inTripsOf(tx, vehicleId);
+      // The cancel clears accepted_at, so how late it is must be read first.
+      const [timing] = await tx
+        .select({ late: lateAfterAccept })
+        .from(bookings)
+        .where(and(eq(bookings.id, bookingId), owner))
+        .for('update');
       const outcome = await transitionBooking(tx, {
         bookingId,
-        owner: inTripsOf(tx, vehicleId),
+        owner,
         from: ['ACCEPTED', 'DRIVER_ARRIVED'],
         to: 'REQUESTED',
         actor: { id: driverId, role: 'driver' },
@@ -894,6 +919,11 @@ export async function driverCancel(
         await releaseSeats(tx, vehicleId, outcome.seats);
         await writePlan(tx, outcome.poolId, unreached);
         await finishPoolIfDone(tx, outcome.poolId);
+        if (timing?.late) {
+          await tx
+            .insert(driverPenalties)
+            .values({ driverId, bookingId, reason: 'late_driver_cancel' });
+        }
         return;
       }
       if (outcome.current === null) {

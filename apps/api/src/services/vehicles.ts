@@ -1,6 +1,6 @@
 import { and, eq, isNotNull, sql } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
-import { vehicles, type Vehicle } from '../db/schema/index.js';
+import { driverPenalties, vehicles, type Vehicle } from '../db/schema/index.js';
 import type { LatLng } from '../geo/serviceArea.js';
 import { AppError } from '../http/errors.js';
 import { activePoolId } from './pools.js';
@@ -14,7 +14,14 @@ export interface DriverVehicle {
   occupiedSeats: number;
   isOnline: boolean;
   location: LatLng | null;
+  // Late cancels recorded against the driver (FR-D13). What they lead to isn't decided yet.
+  penaltyCount: number;
 }
+
+// The driver's penalty records, counted wherever the Tesla is returned.
+const penaltyCount = sql<number>`(
+  SELECT count(*) FROM ${driverPenalties} WHERE ${driverPenalties.driverId} = ${vehicles.driverId}
+)`.mapWith(Number);
 
 const vehicleColumns = {
   id: vehicles.id,
@@ -24,12 +31,13 @@ const vehicleColumns = {
   isOnline: vehicles.isOnline,
   currentLat: vehicles.currentLat,
   currentLng: vehicles.currentLng,
+  penaltyCount,
 };
 
 type VehicleRow = Pick<
   Vehicle,
   'id' | 'name' | 'capacity' | 'occupiedSeats' | 'isOnline' | 'currentLat' | 'currentLng'
->;
+> & { penaltyCount: number };
 
 function toDriverVehicle({ currentLat, currentLng, ...rest }: VehicleRow): DriverVehicle {
   return {
