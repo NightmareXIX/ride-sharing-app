@@ -2,7 +2,14 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { PAYMENT_METHODS } from '../../domain/booking.js';
 import { currentSession, requireAuth, requireRole } from '../../http/middleware/auth.js';
-import { cancelRide, getBooking, getCurrentBooking, requestRide } from '../../services/bookings.js';
+import { parsePageQuery } from '../../http/pagination.js';
+import {
+  cancelRide,
+  getBooking,
+  getCurrentBooking,
+  listRideHistory,
+  requestRide,
+} from '../../services/bookings.js';
 import type { V1Deps } from './index.js';
 import { bookingId, trip } from './schemas.js';
 
@@ -31,6 +38,13 @@ export function bookingsRouter(deps: V1Deps): Router {
   // Polled every 4 seconds by the passenger's screen (NFR-3).
   router.get('/current', async (req, res) => {
     res.json({ booking: await getCurrentBooking(db, currentSession(req).userId) });
+  });
+
+  // Past rides, newest first, in pages (FR-P6, NFR-36). The ride in progress is at /current.
+  router.get('/', async (req, res) => {
+    const page = parsePageQuery(req.query);
+    const { items, nextCursor } = await listRideHistory(db, currentSession(req).userId, page);
+    res.json({ bookings: items, nextCursor });
   });
 
   router.get('/:id', async (req, res) => {

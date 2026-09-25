@@ -1,5 +1,5 @@
 import Big from 'big.js';
-import { and, eq, max, notInArray, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, max, notInArray, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Database, Transaction } from '../db/client.js';
 import { isUniqueViolation } from '../db/errors.js';
@@ -26,6 +26,7 @@ import type { PlannedStop } from '../domain/route.js';
 import type { DistanceMethod, DistanceService } from '../geo/distance.js';
 import type { LatLng } from '../geo/serviceArea.js';
 import { AppError } from '../http/errors.js';
+import { toPage, type Page, type PageRequest } from '../http/pagination.js';
 import type { Logger } from '../logger.js';
 import { fareColumns, toFareBreakdown, type FareBreakdown } from './fares.js';
 import { finishPoolIfDone, releaseSeats } from './pools.js';
@@ -105,6 +106,8 @@ const freeCancelWindow = sql.raw(`interval '${FREE_CANCEL_WINDOW}'`);
 
 const bookingColumns = {
   id: bookings.id,
+  // The history's cursor; not part of the view.
+  seq: bookings.seq,
   status: bookings.status,
   pickupLat: bookings.pickupLat,
   pickupLng: bookings.pickupLng,
@@ -158,7 +161,15 @@ type BookingRow = Awaited<ReturnType<typeof selectBooking>>[number];
 
 export function toBookingView(row: BookingRow): BookingView {
   const { pickupLat, pickupLng, pickupLabel, destLat, destLng, destLabel, ...rest } = row;
-  const { driverName, vehicleName, latestReason: reason, fare, fineAmount, ...details } = rest;
+  const {
+    driverName,
+    vehicleName,
+    latestReason: reason,
+    fare,
+    fineAmount,
+    seq: _seq,
+    ...details
+  } = rest;
   return {
     ...details,
     pickup: { lat: pickupLat, lng: pickupLng, label: pickupLabel },
@@ -227,6 +238,27 @@ export async function getBooking(
   );
   if (!row) throw notFound();
   return toBookingView(row);
+}
+
+// The passenger's rides that have ended, newest first, a page at a time (FR-P6, NFR-36).
+// Each is the same view as a single ride, so it carries its fare breakdown or fine.
+export async function listRideHistory(
+  db: Database,
+  passengerId: string,
+  { after, limit }: PageRequest,
+): Promise<Page<BookingView>> {
+  const rows = await selectBooking(db)
+    .where(
+      and(
+        eq(bookings.passengerId, passengerId),
+        inArray(bookings.status, FINAL_STATUSES),
+        after === null ? undefined : lt(bookings.seq, after),
+      ),
+    )
+    .orderBy(desc(bookings.seq))
+    .limit(limit + 1);
+  const page = toPage(rows, limit, (row) => row.seq);
+  return { ...page, items: page.items.map(toBookingView) };
 }
 
 function samePlace(a: Place, b: Place): boolean {

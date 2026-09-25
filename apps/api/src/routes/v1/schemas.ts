@@ -44,6 +44,13 @@ export function bookingId(raw: string): string {
   return parsed.data;
 }
 
+// A trip id from the path, not found rather than invalid, as for bookings (NFR-8).
+export function poolId(raw: string): string {
+  const parsed = uuidParam.safeParse(raw);
+  if (!parsed.success) throw new AppError(404, 'NOT_FOUND', 'This trip was not found.');
+  return parsed.data;
+}
+
 // Pickup and destination this close together aren't a ride.
 export const MIN_TRIP_KM = 0.1;
 

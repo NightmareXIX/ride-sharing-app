@@ -412,7 +412,7 @@ function DriverDashboard({
             {formatTaka(account.wallet.balance)}
           </p>
           <Link
-            href="/driver/wallet"
+            href="/driver/trips"
             className="mt-2 inline-block text-sm font-medium text-slate-700 underline underline-offset-2"
           >
             See your earnings
