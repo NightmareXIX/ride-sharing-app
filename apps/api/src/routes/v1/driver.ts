@@ -3,6 +3,7 @@ import { currentSession, requireAuth, requireRole } from '../../http/middleware/
 import {
   acceptRequest,
   completeTrip,
+  driverCancel,
   getDriverTrip,
   markArrived,
   startTrip,
@@ -65,6 +66,12 @@ export function driverRouter({ db, session, dispatch }: V1Deps): Router {
   router.post('/bookings/:id/complete', async (req, res) => {
     const id = bookingId(req.params.id);
     res.json(await completeTrip(db, currentSession(req).userId, id));
+  });
+
+  // Before pickup only. The request goes back to other drivers (FR-D12).
+  router.post('/bookings/:id/cancel', async (req, res) => {
+    const id = bookingId(req.params.id);
+    res.json({ pool: await driverCancel(db, currentSession(req).userId, id) });
   });
 
   return router;

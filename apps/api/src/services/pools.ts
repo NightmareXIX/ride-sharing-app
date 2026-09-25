@@ -1,7 +1,14 @@
-import { and, asc, eq, inArray, notExists, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, notExists, sql, type SQL } from 'drizzle-orm';
 import type { PgUpdateSetSource } from 'drizzle-orm/pg-core';
 import type { Database, Transaction } from '../db/client.js';
-import { bookings, fares, pools, users, vehicles } from '../db/schema/index.js';
+import {
+  bookings,
+  bookingStatusHistory,
+  fares,
+  pools,
+  users,
+  vehicles,
+} from '../db/schema/index.js';
 import {
   ASSIGNED_STATUSES,
   type AssignedStatus,
@@ -392,4 +399,56 @@ export async function completeTrip(
   const stored = await getFare(db, bookingId);
   if (!stored) throw new Error(`Completed booking ${bookingId} has no fare`);
   return { pool: await getDriverTrip(db, driverId), fare: stored };
+}
+
+// Whether this driver's cancel is the latest thing to happen to the booking, so a second
+// tap of Cancel can be answered as the first was.
+async function cancelledLastBy(tx: Transaction, bookingId: string, driverId: string) {
+  const [latest] = await tx
+    .select({ reason: bookingStatusHistory.reason, actorId: bookingStatusHistory.actorId })
+    .from(bookingStatusHistory)
+    .where(eq(bookingStatusHistory.bookingId, bookingId))
+    .orderBy(desc(bookingStatusHistory.createdAt), desc(bookingStatusHistory.id))
+    .limit(1);
+  return latest?.reason === 'driver_cancel' && latest.actorId === driverId;
+}
+
+// The driver drops a passenger before pickup (FR-D12). The request goes back to REQUESTED,
+// visible to every driver again, and keeps its place in the queue. The history keeps the
+// pool it left. The penalty for a late cancel (FR-D13) arrives in phase 6.
+export async function driverCancel(
+  db: Database,
+  driverId: string,
+  bookingId: string,
+): Promise<DriverTrip | null> {
+  await db.transaction(async (tx) => {
+    const vehicleId = await lockTesla(tx, driverId);
+    const outcome = await transitionBooking(tx, {
+      bookingId,
+      owner: inTripsOf(tx, vehicleId),
+      from: ['ACCEPTED', 'DRIVER_ARRIVED'],
+      to: 'REQUESTED',
+      actor: { id: driverId, role: 'driver' },
+      reason: 'driver_cancel',
+      set: { poolId: null, acceptedAt: null, arrivedAt: null },
+    });
+    if (outcome.ok) {
+      if (outcome.poolId) await finishPoolIfDone(tx, outcome.poolId);
+      return;
+    }
+    if (outcome.current === null) {
+      // Already handed back by this driver: a second tap (NFR-37).
+      if (await cancelledLastBy(tx, bookingId, driverId)) return;
+      throw notFound();
+    }
+    if (outcome.current === 'STARTED') {
+      throw new AppError(
+        409,
+        'INVALID_TRANSITION',
+        'The passenger is already aboard. Complete the ride instead.',
+      );
+    }
+    throw outOfStep(outcome.current);
+  });
+  return getDriverTrip(db, driverId);
 }
