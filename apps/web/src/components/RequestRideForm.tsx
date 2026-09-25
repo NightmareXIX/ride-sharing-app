@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState, type ReactNode } from 'react';
 import { ChoiceGroup, FieldError, FormAlert } from '@/components/forms';
 import { MapPicker, type MapMarker } from '@/components/MapPicker';
@@ -26,6 +27,9 @@ type Pending = 'estimate' | 'request' | null;
 
 const primaryButton =
   'flex w-full items-center justify-center rounded-lg bg-slate-900 px-4 py-2.5 text-base font-medium text-white transition hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:cursor-not-allowed disabled:opacity-60';
+
+const WALLET_PATH = '/passenger/wallet';
+const walletLink = 'font-medium underline underline-offset-2';
 
 const OPTION_CHOICES: ReadonlyArray<{ value: RideOption; label: ReactNode }> = [
   { value: 'pool', label: <ChoiceLabel title="Pool" detail="Share the ride" /> },
@@ -280,7 +284,13 @@ export function RequestRideForm({
     <div className="space-y-5">
       <FormAlert>{alert}</FormAlert>
       {negativeBalance && (
-        <FormAlert>Your balance is below zero. Top up before requesting a ride.</FormAlert>
+        <FormAlert>
+          Your balance is below zero.{' '}
+          <Link href={WALLET_PATH} className={walletLink}>
+            Top up
+          </Link>{' '}
+          before requesting a ride.
+        </FormAlert>
       )}
 
       <div className="space-y-2">
@@ -358,7 +368,11 @@ export function RequestRideForm({
           <QuoteCard quote={quote} seats={seats} rideOption={rideOption} />
           {teslaPayShort && (
             <p className="text-sm text-amber-700">
-              Your TeslaPay balance doesn’t cover this fare. Choose Cash to ride now.
+              Your TeslaPay balance doesn’t cover this fare. Choose Cash to ride now, or{' '}
+              <Link href={WALLET_PATH} className={walletLink}>
+                top up
+              </Link>
+              .
             </p>
           )}
           <button
