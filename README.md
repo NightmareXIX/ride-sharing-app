@@ -28,6 +28,7 @@ The Tesla never carries more people than it has seats, and every passenger pays 
 - [Demo credentials](#demo-credentials)
 - [API overview](#api-overview)
 - [Pooling](#pooling)
+- [Ride options](#ride-options)
 - [TeslaPay and fines](#teslapay-and-fines)
 - [Concurrency](#concurrency)
 - [Assumptions](#assumptions)
@@ -324,6 +325,17 @@ has a button. Take the steps in order. With no map key, Nusrat pays ৳ 52.02 an
 for both, and their wallets end at ৳ 447.98 and ৳ 428.58 while Jashim's reaches
 ৳ 123.44.
 
+To see a same-gender pool: with Jashim online at Banani Road 11, have Nusrat request Banani
+Road 11 → Mohakhali as **Same-gender** and accept it. Jashim's trip is marked **Women
+only**. Have Shirin request the same trip, Same-gender and Cash, and Rafiq request Banani
+Road 11 → Gulshan 1 as Pool. Only Shirin's request is listed. Accept it and take the
+steps: each woman pays ৳ 54.62 ([worked out below](#ride-options)). Once both are dropped
+off, Rafiq's request appears.
+
+To see a solo ride: have Rafiq request Banani Road 11 → Gulshan 1 as **Solo** and accept
+it. Jashim's trip is marked **Solo ride**, and his request list stays empty until Rafiq is
+dropped off. Rafiq pays his estimate, ৳ 87.10.
+
 To see a late-cancel fine: have Shirin request a Cash ride and Jashim accept it. After
 3 minutes her screen says cancelling now costs ৳ 30.00. Cancel: she is fined, her balance
 goes from ৳ 20.00 to -৳ 10.00, and the request form asks her to top up first. Top up
@@ -497,6 +509,40 @@ left this to be checked once routing was built. Rather than loosen the rule, the
 quick pick moved to Wireless Gate (23.7812, 90.4090), where the road from Mohakhali to
 Gulshan 1 begins.
 
+## Ride options
+
+A passenger chooses Pool, Same-gender pool (+5%) or Solo (+15%) when requesting (FR-P3,
+FR-F2). The options decide who may share the Tesla (FR-R10):
+
+- **Solo.** Only an empty Tesla can take a Solo request, and while the Solo passenger rides
+  nobody else joins. The driver sees no requests until the drop-off (FR-D6, FR-D7).
+- **Same-gender pool.** It shares only with passengers of the same gender. It can join a
+  Tesla only if everyone aboard shares that gender, and while it rides everyone who joins
+  must too, whatever option they chose. The driver's gender doesn't count.
+- **Pool.** Shares with anyone, as long as no Solo or Same-gender rider stands in the way.
+
+The rule lives in [`domain/rideOptions.ts`](apps/api/src/domain/rideOptions.ts), which does
+no I/O (NFR-26). The driver's list applies it before any road distance is asked for, so a
+request it rules out never uses one of the 3 map checks per refresh (NFR-3). An accept
+applies it again and refuses with `422 NO_LONGER_MATCHES`. Races need nothing new: every
+change to a trip's passengers bumps the Tesla's version, so an accept judged against
+passengers who have since changed is refused (FR-C3). The race tests run a Solo accept
+against a Pool accept, and a Same-gender accept against one of the other gender, 25 times
+each. A passenger's gender is read only to filter the list; it is never sent to the driver
+(NFR-9).
+
+**Nusrat and Shirin's same-gender pool.** Both go Banani Road 11 → Mohakhali, 1 seat,
+Same-gender. With no map key, the trip is 1.835 km and both ride all of it together.
+
+| Same-gender, × 1.05                   | Nusrat         | Shirin      |
+| ------------------------------------- | -------------- | ----------- |
+| Estimate: (30 + 20 × 1.835) × 1.05    | 70.035 → 70.04 | 70.04       |
+| Computed: (30 + 36.70 − 14.68) × 1.05 | 54.621 → 54.62 | 54.62       |
+| **Final**                             | **৳ 54.62**    | **৳ 54.62** |
+
+**Rafiq's solo ride.** Banani Road 11 → Gulshan 1, 2.287 km, nobody shares it:
+`(30 + 20 × 2.287) × 1.15 = 87.101`, so the estimate and the final fare are both ৳ 87.10.
+
 ## TeslaPay and fines
 
 **The ledger.** Every money movement is a row in `wallet_transactions`: a top-up, a fare
@@ -568,6 +614,11 @@ rarely taps that fast, and a retry succeeds.
 
 - **Seed genders.** The brief doesn't give genders. We assume Nusrat and Shirin are female
   and Jashim and Rafiq are male, so a same-gender pool can be demonstrated.
+- **Ride options hold for the whole trip.** FR-R10 says no one joins a Solo booking "while
+  it is active", and anyone joining a Same-gender booking later must match. We apply this
+  to every passenger in the trip until they are dropped off or cancelled, not only to the
+  km two passengers are aboard together. A man can't join a trip with a Same-gender woman
+  in it even if his pickup comes after her drop-off.
 - **Demo password.** One shared, published password for all seeded accounts. They are
   demo accounts, not secrets.
 - **Seat limit.** A Tesla has 1 to 6 passenger seats. The largest model, the Model X,
