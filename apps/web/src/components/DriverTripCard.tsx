@@ -153,7 +153,7 @@ function Passenger({
           <span className="font-semibold tabular-nums">{formatTaka(booking.estimatedFare)}</span>
         </Detail>
       </dl>
-      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-start">
+      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start">
         {/* The stops go in order: a step is offered only at the next stop. */}
         {booking.canAct ? (
           <button
