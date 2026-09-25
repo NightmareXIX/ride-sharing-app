@@ -25,7 +25,8 @@ export type ErrorCode =
   // Pooling (phase 5)
   | 'OUT_OF_STOP_ORDER'
   // TeslaPay and fines (phase 6)
-  | 'BALANCE_LIMIT';
+  | 'BALANCE_LIMIT'
+  | 'NO_SHOW_TOO_EARLY';
 
 // Every error response has this shape (NFR-35).
 export interface ErrorBody {

@@ -6,6 +6,7 @@ import {
   driverCancel,
   getDriverTrip,
   markArrived,
+  markNoShow,
   startTrip,
 } from '../../services/pools.js';
 import { listNearbyRequests } from '../../services/requests.js';
@@ -76,6 +77,12 @@ export function driverRouter(deps: V1Deps): Router {
   router.post('/bookings/:id/cancel', async (req, res) => {
     const id = bookingId(req.params.id);
     res.json({ pool: await driverCancel(deps, req.log, currentSession(req).userId, id) });
+  });
+
+  // The passenger didn't come: allowed 5 minutes after arriving, and fines them (FR-D11).
+  router.post('/bookings/:id/no-show', async (req, res) => {
+    const id = bookingId(req.params.id);
+    res.json({ pool: await markNoShow(deps, req.log, currentSession(req).userId, id) });
   });
 
   return router;

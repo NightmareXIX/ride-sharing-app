@@ -14,6 +14,7 @@ import {
 import {
   ASSIGNED_STATUSES,
   isAssigned,
+  NO_SHOW_WAIT,
   type AssignedStatus,
   type BookingStatus,
   type PaymentMethod,
@@ -30,6 +31,7 @@ import {
   type StopType,
 } from '../domain/route.js';
 import { fitsFreeSeats } from '../domain/seats.js';
+import { FINE_AMOUNT } from '../domain/wallet.js';
 import type { DistanceMethod, DistanceService } from '../geo/distance.js';
 import type { LatLng } from '../geo/serviceArea.js';
 import { AppError } from '../http/errors.js';
@@ -48,7 +50,7 @@ import {
   writePlan,
 } from './routes.js';
 import { transitionBooking } from './transitions.js';
-import { settleFare, type Settlement } from './wallet.js';
+import { postEntry, settleFare, type Settlement } from './wallet.js';
 
 // What the trip services need beyond the database: road distances to plan routes with.
 export interface TripDeps {
@@ -74,6 +76,10 @@ export interface TripBooking {
   nextAction: NextAction;
   // Whether the next action can be taken now: it happens at the next stop.
   canAct: boolean;
+  // From then on, a passenger who hasn't come can be marked a no-show (FR-D11); null
+  // before arrival. canNoShow says whether that time has come, by the database clock.
+  noShowFrom: Date | null;
+  canNoShow: boolean;
 }
 
 // One stop on the driver's route, in order (FR-D14, FR-L5).
@@ -100,6 +106,8 @@ export interface DriverTrip {
   stops: TripStopView[];
   bookings: TripBooking[];
 }
+
+const noShowWait = sql.raw(`interval '${NO_SHOW_WAIT}'`);
 
 // The stop each step happens at.
 const STEP_STOPS: Record<NextAction, StopType> = {
@@ -176,6 +184,10 @@ export async function getDriverTrip(db: Database, driverId: string): Promise<Dri
       acceptedAt: bookings.acceptedAt,
       arrivedAt: bookings.arrivedAt,
       startedAt: bookings.startedAt,
+      noShowFrom: sql<Date | null>`${bookings.arrivedAt} + ${noShowWait}`.mapWith(
+        bookings.arrivedAt,
+      ),
+      canNoShow: sql<boolean>`${bookings.status} = 'DRIVER_ARRIVED' AND now() >= ${bookings.arrivedAt} + ${noShowWait}`,
     })
     .from(bookings)
     .innerJoin(users, eq(users.id, bookings.passengerId))
@@ -204,6 +216,8 @@ export async function getDriverTrip(db: Database, driverId: string): Promise<Dri
         startedAt: row.startedAt,
         nextAction: action,
         canAct: isNext(row.id, STEP_STOPS[action]),
+        noShowFrom: row.noShowFrom,
+        canNoShow: row.canNoShow,
       },
     ];
   });
@@ -799,16 +813,21 @@ export async function completeTrip(
   return { pool: await getDriverTrip(db, driverId), fare: stored };
 }
 
-// Whether this driver's cancel is the latest thing to happen to the booking, so a second
-// tap of Cancel can be answered as the first was.
-async function cancelledLastBy(tx: Transaction, bookingId: string, driverId: string) {
+// Whether this driver's cancel or no-show is the latest thing to happen to the booking, so a
+// second tap can be answered as the first was.
+async function lastChangedBy(
+  tx: Transaction,
+  bookingId: string,
+  driverId: string,
+  reason: TransitionReason,
+): Promise<boolean> {
   const [latest] = await tx
     .select({ reason: bookingStatusHistory.reason, actorId: bookingStatusHistory.actorId })
     .from(bookingStatusHistory)
     .where(eq(bookingStatusHistory.bookingId, bookingId))
     .orderBy(desc(bookingStatusHistory.createdAt), desc(bookingStatusHistory.id))
     .limit(1);
-  return latest?.reason === 'driver_cancel' && latest.actorId === driverId;
+  return latest?.reason === reason && latest.actorId === driverId;
 }
 
 // The route once the booking leaves this driver's trip, planned before the transaction.
@@ -879,7 +898,7 @@ export async function driverCancel(
       }
       if (outcome.current === null) {
         // Already handed back by this driver: a second tap (NFR-37).
-        if (await cancelledLastBy(tx, bookingId, driverId)) return;
+        if (await lastChangedBy(tx, bookingId, driverId, 'driver_cancel')) return;
         throw notFound();
       }
       if (outcome.current === 'STARTED') {
@@ -890,6 +909,86 @@ export async function driverCancel(
         );
       }
       throw outOfStep(outcome.current);
+    });
+  });
+  return getDriverTrip(db, driverId);
+}
+
+function noShowRefused(current: BookingStatus): AppError {
+  if (current === 'ACCEPTED') {
+    return new AppError(409, 'INVALID_TRANSITION', 'Mark that you have arrived first.');
+  }
+  if (current === 'STARTED') {
+    return new AppError(409, 'INVALID_TRANSITION', 'The passenger is already aboard.');
+  }
+  return outOfStep(current);
+}
+
+// The passenger didn't come (FR-D11). Allowed 5 minutes after the driver arrived, by the
+// database clock (FR-R9, NFR-38). The booking is cancelled, its seats are freed, its stops
+// leave the route and the rest is re-planned, as for a driver cancel, and the passenger is
+// fined 30 tk, even below zero (FR-W6). The wallet is locked last (FR-C7).
+export async function markNoShow(
+  deps: TripDeps,
+  log: Logger,
+  driverId: string,
+  bookingId: string,
+): Promise<DriverTrip | null> {
+  const { db } = deps;
+  await withFreshPlan(async () => {
+    const { version, unreached } = await planLeaving(deps, log, driverId, bookingId);
+    await db.transaction(async (tx) => {
+      const vehicleId = await lockTesla(tx, driverId, version);
+      const owner = inTripsOf(tx, vehicleId);
+      const [booking] = await tx
+        .select({
+          status: bookings.status,
+          passengerId: bookings.passengerId,
+          waited: sql<boolean>`coalesce(now() >= ${bookings.arrivedAt} + ${noShowWait}, false)`,
+        })
+        .from(bookings)
+        .where(and(eq(bookings.id, bookingId), owner))
+        .for('update');
+      if (!booking) throw notFound();
+      if (booking.status === 'DRIVER_ARRIVED' && !booking.waited) {
+        throw new AppError(
+          422,
+          'NO_SHOW_TOO_EARLY',
+          'You can mark a no-show 5 minutes after arriving.',
+        );
+      }
+
+      const outcome = await transitionBooking(tx, {
+        bookingId,
+        owner,
+        from: ['DRIVER_ARRIVED'],
+        to: 'CANCELLED',
+        actor: { id: driverId, role: 'driver' },
+        reason: 'no_show',
+        set: { cancelledAt: sql`now()` },
+      });
+      if (outcome.ok) {
+        if (!outcome.poolId || !unreached) throw new StaleRoute();
+        await releaseSeats(tx, vehicleId, outcome.seats);
+        await writePlan(tx, outcome.poolId, unreached);
+        await finishPoolIfDone(tx, outcome.poolId);
+        await postEntry(tx, {
+          userId: booking.passengerId,
+          type: 'fine',
+          amount: FINE_AMOUNT,
+          bookingId,
+        });
+        return;
+      }
+      if (outcome.current === null) throw notFound();
+      // Already marked by this driver: a second tap, with no second fine (NFR-37).
+      if (
+        outcome.current === 'CANCELLED' &&
+        (await lastChangedBy(tx, bookingId, driverId, 'no_show'))
+      ) {
+        return;
+      }
+      throw noShowRefused(outcome.current);
     });
   });
   return getDriverTrip(db, driverId);
