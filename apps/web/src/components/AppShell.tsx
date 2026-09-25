@@ -41,7 +41,7 @@ function Nav({ role }: { role: Role }) {
   const pathname = usePathname();
   const links = [
     { href: homePath(role), label: 'Rides', nested: false },
-    ...(role === 'passenger' ? [{ href: historyPath(role), label: 'History', nested: true }] : []),
+    { href: historyPath(role), label: 'History', nested: true },
     { href: `${homePath(role)}/wallet`, label: 'Wallet', nested: false },
   ];
   return (
