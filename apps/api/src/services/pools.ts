@@ -199,10 +199,6 @@ function judgeAccept(
   if (booking.status !== 'REQUESTED') {
     throw new AppError(409, 'ALREADY_CLAIMED', 'Another driver took this ride.');
   }
-  // One ride at a time until pooling arrives (phase 5).
-  if (currentPool !== null) {
-    throw new AppError(422, 'NO_LONGER_MATCHES', 'Finish your current ride first.');
-  }
   if (!fitsFreeSeats(tesla.capacity, tesla.occupiedSeats, booking.seats)) {
     throw new AppError(
       409,
@@ -212,6 +208,9 @@ function judgeAccept(
         : 'Your Tesla has no free seat for this ride any more.',
     );
   }
+  // Until the matching rule arrives (phase 5, FR-L3), a request joins a Tesla, busy or
+  // not, when its pickup is in range. A Tesla with passengers can't move, so the range is
+  // measured from where its trip began.
   const pickup = { lat: booking.pickupLat, lng: booking.pickupLng };
   if (!isNearby({ lat: tesla.lat, lng: tesla.lng }, pickup, searchRadiusKm)) {
     throw new AppError(422, 'NO_LONGER_MATCHES', 'This pickup is too far from your Tesla.');

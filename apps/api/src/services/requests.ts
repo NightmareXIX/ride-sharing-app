@@ -9,8 +9,8 @@ import {
   type DispatchConfig,
 } from '../domain/dispatch.js';
 import type { RideOption } from '../domain/fare.js';
+import { freeSeats } from '../domain/seats.js';
 import type { Place } from './bookings.js';
-import { activePoolId } from './pools.js';
 import { getDriverVehicle } from './vehicles.js';
 
 // A request as a driver sees it before accepting: where and what, never who (NFR-9).
@@ -27,11 +27,13 @@ export interface NearbyRequest {
   pickupDistanceKm: string;
 }
 
-// Enough to choose from; a Tesla takes one ride at a time until pooling (phase 5).
+// Enough to choose from; a full Bullet has no seats for any of them.
 const MAX_LISTED = 20;
 
-// Open requests an online, idle driver may accept, oldest first (FR-D5, FR-D6). An offline
-// driver, or one with a passenger, sees none until phase 5 adds the matching rule (FR-L3).
+// Open requests an online driver may accept, oldest first (FR-D5, FR-D6): they fit the
+// Tesla's free seats and their pickup is in range (FR-D7, FR-D9). An offline driver, or
+// one whose Tesla is full, sees none. Phase 5 adds the matching rule for a Tesla with
+// passengers (FR-L3).
 export async function listNearbyRequests(
   db: Database,
   driverId: string,
@@ -40,7 +42,8 @@ export async function listNearbyRequests(
   const tesla = await getDriverVehicle(db, driverId);
   const here = tesla.location;
   if (!tesla.isOnline || !here) return [];
-  if (await activePoolId(db, tesla.id)) return [];
+  const seatsLeft = freeSeats(tesla.capacity, tesla.occupiedSeats);
+  if (seatsLeft === 0) return [];
 
   const box = boundingBox(here, searchRadiusKm);
   const rows = await db
@@ -63,7 +66,7 @@ export async function listNearbyRequests(
     .where(
       and(
         eq(bookings.status, 'REQUESTED'),
-        lte(bookings.seats, tesla.capacity),
+        lte(bookings.seats, seatsLeft),
         between(bookings.pickupLat, box.minLat, box.maxLat),
         between(bookings.pickupLng, box.minLng, box.maxLng),
       ),
