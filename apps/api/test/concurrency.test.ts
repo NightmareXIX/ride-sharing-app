@@ -13,6 +13,7 @@ import {
   ageArrival,
   driverAction,
   errorCode,
+  expectRideOptionsHeld,
   expectRouteMatchesBookings,
   expectSeatsMatchBookings,
   goOnlineAt,
@@ -547,6 +548,57 @@ describe('money under races (FR-C7, NFR-37)', () => {
         }
         expect(await balanceOf(server, nusrat)).toBe('62.98');
         await expectInvariants();
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+});
+
+describe('ride options under races (FR-R10, FR-C3)', () => {
+  // Two accepts for an idle Tesla go in at once. Exactly one wins; the loser is judged
+  // again against the winner's rider and refused, with nothing changed.
+  async function raceForIdleTesla(first: string, second: string) {
+    const results = await Promise.all(
+      [first, second].map(async (id) => outcome(await acceptRequest(server, jashim, id))),
+    );
+    expect(results.filter((r) => r.status === 200)).toHaveLength(1);
+    expect(results.filter((r) => r.status !== 200)).toEqual([
+      { status: 422, code: 'NO_LONGER_MATCHES' },
+    ]);
+    const lost = results[0]?.status === 200 ? second : first;
+    expect(await statusOf(lost)).toBe('REQUESTED');
+    expect(await historyCount(lost)).toBe(1);
+    expect(await seatsTaken(pool)).toBe(1);
+    await expectRideOptionsHeld(pool);
+    await expectSeatsMatchBookings(pool);
+    await expectRouteMatchesBookings(pool);
+  }
+
+  it(
+    'never lets a Solo ride and another ride into one Tesla',
+    async () => {
+      for (let round = 0; round < ROUNDS; round += 1) {
+        await resetRides(pool);
+        const rafiqs = await requestRide(server, rafiq, tripFrom(BANANI, { rideOption: 'solo' }));
+        const nusrats = await requestRide(server, nusrat, tripFrom(BANANI));
+        await raceForIdleTesla(rafiqs.id, nusrats.id);
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+
+  it(
+    'never lets a Same-gender ride share with the other gender',
+    async () => {
+      for (let round = 0; round < ROUNDS; round += 1) {
+        await resetRides(pool);
+        const nusrats = await requestRide(
+          server,
+          nusrat,
+          tripFrom(BANANI, { rideOption: 'same_gender' }),
+        );
+        const rafiqs = await requestRide(server, rafiq, tripFrom(BANANI));
+        await raceForIdleTesla(nusrats.id, rafiqs.id);
       }
     },
     RACE_TIMEOUT_MS,
