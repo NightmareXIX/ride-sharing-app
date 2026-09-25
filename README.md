@@ -306,7 +306,10 @@ Every seeded account uses the password **`TeslaPool#2026`**.
 | Rafiq  | rafiq@teslapool.test  | passenger | male   |
 | Shirin | shirin@teslapool.test | passenger | female |
 
-Sign in at http://localhost:3000/login. Jashim drives the Tesla "Bullet" (3 seats), which
+To skip typing them in, use **Try the demo** on the home page (http://localhost:3000) or
+the demo buttons under the sign-in form. One tap signs you in as that account. Otherwise
+sign in at http://localhost:3000/login. A browser holds one session at a time, so use a
+private window to be the driver and a passenger at once. Jashim drives the Tesla "Bullet" (3 seats), which
 starts offline at Banani Road 11. The seed tops up the passengers' TeslaPay wallets, each
 through a ledger entry:
 
