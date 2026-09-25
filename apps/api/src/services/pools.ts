@@ -32,7 +32,13 @@ import {
   type PlannedStop,
   type StopType,
 } from '../domain/route.js';
-import { canJoin, type OptionConflict, type Rider } from '../domain/rideOptions.js';
+import {
+  canJoin,
+  joinRule,
+  type JoinRule,
+  type OptionConflict,
+  type Rider,
+} from '../domain/rideOptions.js';
 import { fitsFreeSeats } from '../domain/seats.js';
 import { FINE_AMOUNT } from '../domain/wallet.js';
 import type { DistanceMethod, DistanceService } from '../geo/distance.js';
@@ -108,6 +114,9 @@ export interface DriverTrip {
   id: string;
   createdAt: Date;
   seats: { capacity: number; taken: number };
+  // Who the ride options still let join: no one on a solo ride, one gender on a
+  // same-gender trip (FR-R10).
+  joinRule: JoinRule;
   // Km along the trip where the rest of the route is planned from.
   odometerKm: string;
   stops: TripStopView[];
@@ -190,6 +199,7 @@ export async function getDriverTrip(db: Database, driverId: string): Promise<Dri
     .select({
       id: bookings.id,
       passengerName: users.name,
+      gender: users.gender,
       status: bookings.status,
       pickupLat: bookings.pickupLat,
       pickupLng: bookings.pickupLng,
@@ -262,7 +272,14 @@ export async function getDriverTrip(db: Database, driverId: string): Promise<Dri
     reachedAt: stop.reachedAt,
     isNext: isNext(stop.bookingId, stop.type),
   }));
-  return { ...pool, seats: { capacity, taken }, odometerKm: anchor.km, stops, bookings: trip };
+  return {
+    ...pool,
+    seats: { capacity, taken },
+    joinRule: joinRule(rows),
+    odometerKm: anchor.km,
+    stops,
+    bookings: trip,
+  };
 }
 
 // What an accept is checked against: the Tesla and the request, read without locks, and
