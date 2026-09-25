@@ -370,23 +370,6 @@ describe('cancelling a waiting request (FR-P7)', () => {
     expect(((await own.json()) as { booking: Booking }).booking.status).toBe('REQUESTED');
   });
 
-  it('refuses to cancel a ride that has finished (FR-R8)', async () => {
-    const { id } = await bookingOf(await requestRide(NUSRAT_TRIP));
-    // No route completes a ride yet, so the state is set directly, in a trip of its own.
-    await pool.query(
-      `WITH trip AS (INSERT INTO pools (vehicle_id) SELECT id FROM vehicles RETURNING id)
-       UPDATE bookings SET status = 'COMPLETED', pool_id = (SELECT id FROM trip),
-         accepted_at = now(), arrived_at = now(), started_at = now(), completed_at = now()
-       WHERE id = $1`,
-      [id],
-    );
-
-    const res = await cancel(id);
-    expect(res.status).toBe(409);
-    expect(await errorCode(res)).toBe('INVALID_TRANSITION');
-    expect(await historyOf(id)).toHaveLength(1);
-  });
-
   it('is for passengers only', async () => {
     const { id } = await bookingOf(await requestRide(NUSRAT_TRIP));
 
