@@ -28,6 +28,18 @@ const longitude = z
 // A location set by hand on the map (FR-D4).
 export const location = z.object({ lat: latitude, lng: longitude }, 'must be a location');
 
+// A point in the query string, e.g. `?lat=23.7937&lng=90.4066`. The text is read as a
+// number, and an empty or missing one is refused rather than read as 0.
+function queryNumber(schema: typeof latitude) {
+  return z.preprocess(
+    (raw) => (typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : raw),
+    schema,
+  );
+}
+
+// Where to look for Teslas near: the pickup being chosen.
+export const nearbyQuery = z.object({ lat: queryNumber(latitude), lng: queryNumber(longitude) });
+
 // A named place: a pickup or a destination.
 export const place = location.extend({
   label: z.string().trim().min(1, 'is required').max(120, 'must be at most 120 characters'),

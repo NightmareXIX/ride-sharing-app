@@ -20,6 +20,12 @@ export function pickupDistanceKm(tesla: LatLng, pickup: LatLng): string {
   return haversineKm(tesla, pickup).toFixed(3);
 }
 
+// A Tesla's point as a passenger sees it: to 3 decimal places, about 110 m, so it shows
+// that a car is near without pinning down where a driver is (NFR-9).
+export function blurPoint({ lat, lng }: LatLng): LatLng {
+  return { lat: Math.round(lat * 1e3) / 1e3, lng: Math.round(lng * 1e3) / 1e3 };
+}
+
 const KM_PER_DEGREE_LAT = 110.574;
 const KM_PER_DEGREE_LNG_AT_EQUATOR = 111.32;
 
