@@ -2,111 +2,339 @@
 
 Share a seat. Split the fare. Survive Dhaka traffic.
 
-A ride-pooling MVP. Passengers request rides, and a driver accepts them into a shared Tesla.
-The Tesla never carries more people than it has seats, and every passenger pays their own fare.
+Dhaka Tesla Pool is a ride-pooling app. Passengers ask for a ride, and a driver takes
+several of them in one Tesla when their trips go the same way. The Tesla never carries more
+people than it has seats, and each passenger pays only for their own part of the trip.
 
-> **Status:** the feature phases, 0 to 8, are done. Passengers request rides on the map and
-> see the estimate first. A driver accepts them into a shared Tesla, which never carries
-> more people than it has seats, and takes each passenger through their stops. Fares follow
-> the pooled formula and are paid in cash or by TeslaPay, with fines for late cancels and
-> no-shows. Solo and same-gender rides decide who may share. Passengers can look back at
-> every ride with its fare breakdown, and drivers at every trip and what they earned. Phase
-> 9 (deployment and release) is next. See
-> [the development plan](docs/Dhaka%20Tesla%20Pool%20—%20Development%20Plan.md).
+- **Live site:** https://dhaka-tesla-pool-omega.vercel.app (the first visit can take a
+  minute while the free server wakes up)
+- **Demo video:** _added at release_ (see [Demo video](#demo-video))
+- **Try it without signing up:** one-tap demo accounts, see [Demo credentials](#demo-credentials)
 
 ## Contents
 
 - [Problem](#problem)
-- [Specs, architecture and ERD](#specs-architecture-and-erd)
+- [Features](#features)
+- [Screenshots](#screenshots)
+- [Architecture and database](#architecture-and-database)
 - [Tech stack and why](#tech-stack-and-why)
 - [Project structure](#project-structure)
 - [Prerequisites](#prerequisites)
-- [Run it with Docker](#run-it-with-docker)
-- [Run it without Docker](#run-it-without-docker)
 - [Environment variables](#environment-variables)
-- [Migrations and seed data](#migrations-and-seed-data)
-- [Tests and checks](#tests-and-checks)
+- [Run it locally](#run-it-locally)
+- [Tests](#tests)
 - [Demo credentials](#demo-credentials)
+- [Deployment](#deployment)
 - [API overview](#api-overview)
-- [Pooling](#pooling)
-- [Ride options](#ride-options)
-- [TeslaPay and fines](#teslapay-and-fines)
-- [History and earnings](#history-and-earnings)
-- [Concurrency](#concurrency)
+- [Key decisions and trade-offs](#key-decisions-and-trade-offs)
 - [Assumptions](#assumptions)
 - [Known limitations](#known-limitations)
-- [Still to come](#still-to-come)
+- [Next improvements](#next-improvements)
+- [If it goes viral (bonus)](#if-dhaka-tesla-pool-goes-viral-bonus)
+- [AI Usage](#ai-usage)
+- [Demo video](#demo-video)
 
 ## Problem
 
 At 8:41 AM on Banani Road 11, Nusrat books a ride to Mohakhali. Two minutes later Rafiq
 books almost the same route to Gulshan 1. Jashim's three-seat Tesla, "Bullet", could take
-both. Then Shirin tries for the last seat. The app has to decide who can share a ride and
-split the fare fairly. It must never oversell a seat, even when two people tap at the same
-instant, and it has to keep enough history to explain afterwards exactly what happened.
+both. Then Shirin tries for the last seat.
 
-## Specs, architecture and ERD
+The app has to decide who can share a ride and split the fare fairly. It must never sell
+more seats than Bullet has, even when two people tap at the same moment. And it has to keep
+enough history to explain afterwards exactly what happened.
 
-The specs are the source of truth for every phase:
+## Features
 
-| Document                                                                            | What it holds                                                         |
-| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| [Functional requirements](docs/Dhaka_Tesla_Pool_Functional_Requirements.md)         | FR-\* IDs, booking state machine, fare formulas, consistency          |
-| [Non-functional requirements](docs/Dhaka_Tesla_Pool_Non_Functional_Requirements.md) | NFR-\* IDs: speed, security, reliability, testing, API rules          |
-| [Core entities](docs/Dhaka_Tesla_Pool_Core_Entities.md)                             | Entities and the ERD                                                  |
-| [API routes](docs/Dhaka_Tesla_Pool_API_Routes.md)                                   | Every route, grouped by role                                          |
-| [Development plan](docs/Dhaka%20Tesla%20Pool%20—%20Development%20Plan.md)           | Phases 0–9 and the workflow for each phase                            |
-| [Phase 1 LLD: accounts](docs/lld/phase-1-accounts.md)                               | Tables, sessions, routes and tests for sign-up and sign-in            |
-| [Phase 2 LLD: ride requests](docs/lld/phase-2-ride-request.md)                      | Availability, road distance, fare estimate, request and cancel        |
-| [Phase 3 LLD: driver flow](docs/lld/phase-3-driver-flow.md)                         | Nearby requests, accept, arrive, start, complete, cancels, final fare |
-| [Phase 4 LLD: seats and concurrency](docs/lld/phase-4-seat-capacity.md)             | Seat claims, stale accepts, lock order, the last-seat race            |
-| [Phase 5 LLD: pooling](docs/lld/phase-5-tesla-pooling.md)                           | Route stops, odometer readings, the matching rule, shared-km fares    |
-| [Phase 6 LLD: TeslaPay and fines](docs/lld/phase-6-teslapay.md)                     | Wallet ledger, top-ups, settlement, fines, no-show, driver penalties  |
+**Passengers** (Nusrat, Rafiq, Shirin)
 
-- Architecture: [docs/Architecture Diagram-selection.png](docs/Architecture%20Diagram-selection.png)
-- ERD: [docs/Dhaka Tesla Pool ERD-selection.png](docs/Dhaka%20Tesla%20Pool%20ERD-selection.png)
+- Sign up, sign in and sign out.
+- Pick a pickup and destination on a map of Dhaka, or with one-tap quick picks.
+- See the Teslas near the pickup, the trip drawn by road, and the fare estimate before
+  booking.
+- Choose seats (1 or more), a ride option (Pool, Same-gender pool or Solo) and how to pay
+  (Cash or TeslaPay).
+- Follow the ride: waiting → accepted → driver arrived → on the way → completed or cancelled.
+- Cancel for free while waiting, or within 3 minutes of a driver accepting. After that, a
+  30 tk fine applies.
+- See past rides, each with its fare worked out step by step.
+- Top up a TeslaPay wallet (pretend money) and see every movement in it.
 
-The ERD shows the target schema. The database grows one migration per phase, so today it
-holds `users`, `wallets`, `wallet_transactions`, `vehicles` (with online status,
-location and seats), `pools`, `bookings` (with their lifecycle times),
-`booking_status_history`, `route_stops`, `fares`, `driver_penalties`, `distance_cache`
-and `route_path_cache`.
+**Driver** (Jashim, with Bullet)
 
-The browser talks only to the Next.js site. The site proxies `/api/v1/*` to the Express
-API, so the login cookie is first-party even though the two run on different hosts.
+- Go online or offline, and set where the Tesla is.
+- See open requests nearby. Once passengers are aboard, see only requests that fit the
+  route, with the extra km each one adds.
+- Accept requests into one shared trip, and take each stop in order: arrived, start,
+  complete.
+- Cancel a ride before pickup (it goes back to waiting for any driver), or mark a no-show
+  after waiting 5 minutes.
+- See the route by road, every passenger and seat, past trips and earnings.
+
+**Pooling and money**
+
+- Several passengers share one Tesla when their trips overlap (the matching rule, below).
+- Seats taken can never go over the Tesla's capacity, even under simultaneous accepts.
+- Each passenger gets their own fare, with a discount for the km they share.
+- Solo rides ride alone, and same-gender pools share only with passengers of the same
+  gender.
+- Paying by TeslaPay moves the fare from the passenger's wallet to the driver's when the
+  ride completes.
+- Every status change, fare, wallet entry and penalty is stored and can never be edited.
+
+## Screenshots
+
+| Passenger: request with estimate and road route               | Driver: a request on the route, drawn over the driver's road            |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| ![Passenger request](docs/screenshots/passenger-estimate.png) | ![Driver sees a pool request](docs/screenshots/driver-pool-request.png) |
+| **Driver: the pooled trip, stops in order**                   | **Passenger: the final fare, worked out**                               |
+| ![Pooled trip](docs/screenshots/driver-pooled-trip.png)       | ![Fare breakdown](docs/screenshots/passenger-fare.png)                  |
+| **Driver: earnings and past trips**                           | **Driver: one past trip, fare per passenger**                           |
+| ![Earnings](docs/screenshots/driver-earnings.png)             | ![Past trip](docs/screenshots/driver-trip.png)                          |
+| **Passenger: TeslaPay wallet**                                | **Home page with the demo accounts**                                    |
+| ![Wallet](docs/screenshots/passenger-wallet.png)              | ![Home page](docs/screenshots/landing.png)                              |
+
+These show Nusrat (Banani Road 11 → Mohakhali) and Rafiq (Banani Road 11 → Airport Road)
+sharing Bullet, with road distances from OpenRouteService.
+
+## Architecture and database
+
+### Architecture
+
+![Architecture diagram](docs/Architecture%20Diagram-selection.png)
+
+The browser talks only to the Next.js website. The website passes every `/api/v1/*` call on
+to the Express API, so the login cookie belongs to the website's own address and works even
+though the two run on different hosts. The API holds all the rules and is the only thing
+that touches the PostgreSQL database. OpenRouteService gives road distances and road shapes.
+When it can't answer, the API uses the straight-line distance × 1.3 instead.
+
+We kept it to one API and one database on purpose. Every seat claim is settled by one row in
+Postgres, so there is nothing else to keep in step.
+
+### Database (ERD)
+
+![ERD](docs/Dhaka%20Tesla%20Pool%20ERD-selection.png)
+
+The drawing above was made while designing. The diagram below is written from the code
+(`apps/api/src/db/schema/`), so it matches the database exactly.
+
+```mermaid
+erDiagram
+    users ||--|| wallets : has
+    users ||--o| vehicles : "drives (drivers only)"
+    users ||--o{ bookings : requests
+    vehicles ||--o{ pools : runs
+    pools |o--o{ bookings : groups
+    pools ||--o{ route_stops : "has route"
+    bookings ||--o{ route_stops : "pickup and drop-off"
+    bookings ||--o| fares : "settles as"
+    bookings ||--o{ booking_status_history : logs
+    users ||--o{ booking_status_history : performs
+    wallets ||--o{ wallet_transactions : records
+    bookings |o--o{ wallet_transactions : "relates to"
+    users ||--o{ driver_penalties : receives
+    bookings ||--o{ driver_penalties : causes
+
+    users {
+        uuid id PK
+        text name
+        text email UK
+        text password_hash
+        gender gender "female, male"
+        user_role role "passenger, driver"
+        timestamptz created_at
+    }
+    wallets {
+        uuid id PK
+        uuid user_id FK,UK
+        numeric balance "10,2"
+        timestamptz updated_at
+    }
+    vehicles {
+        uuid id PK
+        uuid driver_id FK,UK
+        text name
+        int capacity "1 to 6"
+        bool is_online
+        numeric current_lat
+        numeric current_lng
+        int occupied_seats "CHECK 0 to capacity"
+        int version "optimistic lock"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    pools {
+        uuid id PK
+        bigint seq UK
+        uuid vehicle_id FK
+        pool_status status "active, finished"
+        timestamptz created_at
+        timestamptz finished_at
+    }
+    bookings {
+        uuid id PK
+        bigint seq UK
+        uuid passenger_id FK
+        uuid pool_id FK
+        numeric pickup_lat
+        numeric pickup_lng
+        text pickup_label
+        numeric dest_lat
+        numeric dest_lng
+        text dest_label
+        int seats
+        ride_option ride_option "pool, same_gender, solo"
+        payment_method payment_method "cash, teslapay"
+        numeric direct_km
+        distance_method distance_method "routed, fallback"
+        numeric estimated_fare "10,2"
+        booking_status status
+        timestamptz requested_at
+        timestamptz accepted_at
+        timestamptz arrived_at
+        timestamptz started_at
+        timestamptz completed_at
+        timestamptz cancelled_at
+    }
+    booking_status_history {
+        uuid id PK
+        uuid booking_id FK
+        uuid pool_id FK
+        booking_status from_status
+        booking_status to_status
+        uuid actor_id FK
+        text reason
+        timestamptz created_at
+    }
+    route_stops {
+        uuid id PK
+        uuid pool_id FK
+        uuid booking_id FK
+        stop_type type "pickup, dropoff"
+        int sequence
+        numeric lat
+        numeric lng
+        numeric planned_odometer_km
+        numeric actual_odometer_km
+        distance_method distance_method
+        timestamptz reached_at
+    }
+    fares {
+        uuid id PK
+        uuid booking_id FK,UK
+        numeric pickup_odometer_km
+        numeric dropoff_odometer_km
+        numeric actual_km
+        numeric shared_km
+        numeric direct_km
+        int seats
+        numeric seat_multiplier
+        ride_option ride_option
+        numeric option_multiplier
+        numeric estimated_fare "10,2"
+        numeric computed_fare "10,2"
+        numeric final_fare "10,2, at most the estimate"
+        distance_method distance_method
+        distance_method route_distance_method
+        timestamptz created_at
+    }
+    wallet_transactions {
+        uuid id PK
+        bigint seq UK
+        uuid wallet_id FK
+        uuid booking_id FK
+        wallet_transaction_type type
+        numeric amount "10,2, signed"
+        numeric balance_after "10,2"
+        timestamptz created_at
+    }
+    driver_penalties {
+        uuid id PK
+        uuid driver_id FK
+        uuid booking_id FK
+        text reason
+        timestamptz created_at
+    }
+    distance_cache {
+        uuid id PK
+        numeric origin_lat
+        numeric origin_lng
+        numeric dest_lat
+        numeric dest_lng
+        numeric distance_km
+        distance_method method
+        timestamptz created_at
+    }
+    route_path_cache {
+        uuid id PK
+        numeric origin_lat
+        numeric origin_lng
+        numeric dest_lat
+        numeric dest_lng
+        text polyline
+        timestamptz created_at
+    }
+```
+
+What each table is for:
+
+| Table                    | Holds                                                                                         |
+| ------------------------ | --------------------------------------------------------------------------------------------- |
+| `users`                  | Passengers and drivers, with a bcrypt password hash                                           |
+| `wallets`                | One TeslaPay balance per user                                                                 |
+| `vehicles`               | A driver's Tesla: seats, seats taken, online status, location, and a version for safe updates |
+| `pools`                  | One trip by one Tesla, grouping every booking it carries                                      |
+| `bookings`               | One passenger's ride request and its lifecycle times                                          |
+| `booking_status_history` | Every status change, who made it and why. Can't be edited or deleted.                         |
+| `route_stops`            | A trip's pickups and drop-offs in order, with the km reading at each. Readings can't change.  |
+| `fares`                  | The final fare of a completed ride and every number used to work it out. Can't be changed.    |
+| `wallet_transactions`    | The money ledger: top-ups, payments, credits, cash earnings and fines. Append-only.           |
+| `driver_penalties`       | A record each time a driver cancels late                                                      |
+| `distance_cache`         | Road distances already asked for, so the map service isn't asked twice                        |
+| `route_path_cache`       | Road shapes already asked for, used only to draw the map                                      |
+
+### Design documents
+
+The specs were written before the code, and each phase started from its Low-Level Design.
+
+| Document                                                                                                                                                                                                                                                                                                                                                                                                     | What it holds                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| [Functional Requirements](docs/Dhaka_Tesla_Pool_Functional_Requirements.md)                                                                                                                                                                                                                                                                                                                                  | FR-\* IDs, the booking state machine, fare formulas, out of scope |
+| [Non-Functional Requirements](docs/Dhaka_Tesla_Pool_Non_Functional_Requirements.md)                                                                                                                                                                                                                                                                                                                          | NFR-\* IDs: speed, security, reliability, testing, API rules      |
+| [Core Entities](docs/Dhaka_Tesla_Pool_Core_Entities.md)                                                                                                                                                                                                                                                                                                                                                      | Every entity and its fields                                       |
+| [API Routes](docs/Dhaka_Tesla_Pool_API_Routes.md)                                                                                                                                                                                                                                                                                                                                                            | Every route, grouped by role                                      |
+| [Development Plan](docs/Dhaka%20Tesla%20Pool%20—%20Development%20Plan.md)                                                                                                                                                                                                                                                                                                                                    | The phases, the git flow, and changes made along the way          |
+| [Deployment guide](docs/deployment.md)                                                                                                                                                                                                                                                                                                                                                                       | Setting up Neon, Render and Vercel                                |
+| Low-Level Designs: [1 accounts](docs/lld/phase-1-accounts.md), [2 ride requests](docs/lld/phase-2-ride-request.md), [3 driver flow](docs/lld/phase-3-driver-flow.md), [4 seats](docs/lld/phase-4-seat-capacity.md), [5 pooling](docs/lld/phase-5-tesla-pooling.md), [6 TeslaPay](docs/lld/phase-6-teslapay.md), [7 ride options](docs/lld/phase-7-ride-options.md), [8 history](docs/lld/phase-8-history.md) | Tables, routes, rules and tests for each phase                    |
+| Later additions: [driver map](docs/lld/driver-map.md), [nearby Teslas](docs/lld/passenger-nearby-teslas.md), [road routes](docs/lld/route-paths.md)                                                                                                                                                                                                                                                          | Features added after phase 8                                      |
 
 ## Tech stack and why
 
-The brief fixes the language family, React/Next.js and Node.js. The rest is our choice.
+The brief fixes TypeScript/JavaScript, React or Next.js, and Node.js. Everything else was
+our choice.
 
-| Part           | Pick                                         | Alternatives considered    | Why it fits a ride-pooling MVP                                                                                                                                                                                                                                | What would make us switch                                                                                      |
-| -------------- | -------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Language       | TypeScript (web and API)                     | JavaScript                 | One type system from the database to the screen, which catches shape mismatches early (NFR-25).                                                                                                                                                               | Nothing realistic for this project.                                                                            |
-| Frontend       | Next.js (App Router)                         | React + Vite + a router    | Routing and layouts built in. Its rewrites give a same-origin proxy to the API, so the auth cookie works without CORS.                                                                                                                                        | A fully static client with no proxy need.                                                                      |
-| Backend        | Express 5                                    | Fastify, NestJS            | Small and well understood. Express 5 forwards async errors to the error handler, which is all we need. We didn't want NestJS's structure for about 25 routes.                                                                                                 | Throughput limits (Fastify), or a team that wants enforced module structure (NestJS).                          |
-| Database       | PostgreSQL 17                                | MySQL, SQLite              | Seat capacity and single-claim rules need row locks, conditional `UPDATE … WHERE`, CHECK constraints, partial unique indexes and triggers. Postgres has all of them. SQLite locks the whole database on writes, so it can't show a real concurrent seat race. | Nothing at MVP scale. At very large scale we'd shard or add read replicas; see the HLD.                        |
-| ORM            | Drizzle (+ drizzle-kit)                      | Prisma, Kysely             | Queries read like the SQL they run, so the concurrency rules (FR-C1–C7) stay visible and easy to defend. drizzle-kit writes plain SQL migration files we can review and hand-edit. `numeric` comes back as a string, which suits exact money maths.           | If we needed hand-written SQL everywhere we'd use Kysely. If the team preferred a heavier abstraction, Prisma. |
-| Validation     | Zod                                          | Joi                        | TypeScript types are inferred from the schemas, so a validated request body is also typed. It validates env config at startup too (NFR-10, NFR-11).                                                                                                           | Nothing expected.                                                                                              |
-| Tests          | Vitest                                       | Jest                       | Runs TypeScript and ESM natively with no transform setup. Tests call the real HTTP stack with `fetch` against a real Postgres, with no extra test libraries.                                                                                                  | Nothing expected.                                                                                              |
-| Money maths    | big.js                                       | decimal.js, integer poysha | Exact decimal arithmetic with half-up rounding in a few KB. Fares multiply by 1.05 and 1.15, and plain JavaScript numbers get some of them wrong: (30 + 20 × 0.115) × 1.15 comes out as 37.144999…, not 37.145.                                               | A need for functions big.js lacks (decimal.js).                                                                |
-| Styling        | Tailwind CSS                                 | CSS Modules                | Responsive layouts for phones and laptops (NFR-21) without a growing set of CSS files.                                                                                                                                                                        | A designer-owned design system with its own CSS.                                                               |
-| Map            | react-leaflet + OpenStreetMap tiles          | MapLibre                   | Leaflet is small, needs no API key and shows the OSM credit by default (NFR-24).                                                                                                                                                                              | Vector maps or heavy map interaction (MapLibre).                                                               |
-| Road distances | OpenRouteService, fallback haversine × 1.3   | OSRM, Dhaka zone table     | A free key with enough quota for a demo. The fallback keeps the app working on an evaluator's machine with no key (NFR-13).                                                                                                                                   | Quota limits: self-host OSRM.                                                                                  |
-| Logging        | pino + pino-http                             | winston, morgan            | Structured JSON with a request id on every line, and header-free entries so cookies never reach the logs (NFR-42/43).                                                                                                                                         | A hosted log pipeline with its own agent.                                                                      |
-| Passwords      | bcryptjs                                     | bcrypt (native), argon2    | The bcrypt algorithm (NFR-7) in pure JS, so the Alpine images need no native build step.                                                                                                                                                                      | Login throughput: switch to native bcrypt or argon2.                                                           |
-| Hosting        | Vercel, Render (Singapore), Neon (Singapore) | Railway, Fly.io            | All free tiers. The API and database share a region, which keeps query latency low.                                                                                                                                                                           | Free-tier sleep becomes unacceptable.                                                                          |
-| CI             | GitHub Actions                               | —                          | Runs format, lint, typecheck, build and tests against a Postgres service on every PR (NFR-30).                                                                                                                                                                | —                                                                                                              |
+| Part           | Pick                                           | Alternatives               | Why it fits a ride-pooling app                                                                                                                                                                        | What would make us switch                                          |
+| -------------- | ---------------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Language       | TypeScript (web and API)                       | JavaScript                 | One type system from the database to the screen catches mismatched shapes early (NFR-25).                                                                                                             | Nothing realistic here.                                            |
+| Frontend       | Next.js (App Router)                           | React + Vite + a router    | Routing and layouts built in. Its rewrites give a same-origin proxy to the API, so the login cookie works without CORS.                                                                               | A fully static client with no need for a proxy.                    |
+| Backend        | Express 5                                      | Fastify, NestJS            | Small and well known. Express 5 passes async errors to the error handler. About 30 routes didn't need NestJS's structure.                                                                             | Throughput limits (Fastify), or a large team (NestJS).             |
+| Database       | PostgreSQL 17                                  | MySQL, SQLite              | Seat and claim rules need row locks, conditional `UPDATE … WHERE`, CHECK constraints, partial unique indexes and triggers. SQLite locks the whole file on writes, so it can't show a real seat race.  | Nothing at this scale. At very large scale, replicas and sharding. |
+| ORM            | Drizzle (+ drizzle-kit)                        | Prisma, Kysely             | Queries read like the SQL they run, so the concurrency rules stay visible. drizzle-kit writes plain SQL migrations we can review and edit. `numeric` comes back as a string, which suits exact money. | Hand-written SQL everywhere (Kysely), or a team used to Prisma.    |
+| Validation     | Zod                                            | Joi                        | TypeScript types come straight from the schemas. It also checks the environment variables at startup (NFR-10, NFR-11).                                                                                | Nothing expected.                                                  |
+| Tests          | Vitest                                         | Jest                       | Runs TypeScript and ES modules with no setup. Tests call the real HTTP API with `fetch` against a real Postgres.                                                                                      | Nothing expected.                                                  |
+| Money maths    | big.js                                         | decimal.js, integer poysha | Exact decimal maths with half-up rounding. Plain JavaScript numbers get some fares wrong: (30 + 20 × 0.115) × 1.15 comes out as 37.144999…, not 37.145.                                               | Needing functions big.js lacks (decimal.js).                       |
+| Styling        | Tailwind CSS                                   | CSS Modules                | Layouts that work on phones and laptops (NFR-21) without a growing pile of CSS files.                                                                                                                 | A designer-owned design system.                                    |
+| Map            | react-leaflet + OpenStreetMap tiles            | MapLibre                   | Small, needs no API key, and shows the OpenStreetMap credit (NFR-24).                                                                                                                                 | Vector maps or heavy map interaction (MapLibre).                   |
+| Road distances | OpenRouteService, fallback straight line × 1.3 | OSRM, a zone table         | A free key with enough quota. The fallback keeps the app working with no key at all (NFR-13).                                                                                                         | Running out of quota: host OSRM ourselves.                         |
+| Logging        | pino + pino-http                               | winston, morgan            | JSON logs with a request id on every line, and no headers, so cookies never reach the logs (NFR-42, NFR-43).                                                                                          | A hosted log service with its own agent.                           |
+| Passwords      | bcryptjs                                       | bcrypt, argon2             | The bcrypt algorithm (NFR-7) in plain JavaScript, so the Docker images need no native build.                                                                                                          | Login throughput: native bcrypt or argon2.                         |
+| Auth           | Signed JWT in an HttpOnly cookie, 24 h         | Server sessions table      | No session table to query on every request, and any number of API copies can check it.                                                                                                                | Needing to revoke a session at once (add a sessions table).        |
+| Hosting        | Vercel, Render (Singapore), Neon (Singapore)   | Railway, Fly.io            | All free. The API and database sit in the same region, close to Dhaka.                                                                                                                                | Free-tier sleep becoming unacceptable.                             |
+| CI             | GitHub Actions                                 | —                          | Formatting, lint, type checks, build and all tests against Postgres on every pull request (NFR-30).                                                                                                   | —                                                                  |
 
-Version pins worth knowing: TypeScript is held at 6.0 because typescript-eslint doesn't
-support TypeScript 7 yet. ESLint is held at 9 because Next's lint plugins don't support
-ESLint 10 yet.
-
-**Money** is stored as `DECIMAL(10,2)` and handled with decimal arithmetic, never floats. It
-travels over the API as strings like `"116.00"`. We chose decimal taka over integer poysha
-because the fare formula multiplies by factors like 1.05 and 1.15. Keeping full precision
-until one final half-up rounding (FR-F5) makes every fare checkable by hand. The API does
-that maths with big.js; the website only formats the strings it receives, and compares
-amounts in whole poysha.
+Version pins: TypeScript stays at 6.0 because typescript-eslint doesn't support 7 yet, and
+ESLint stays at 9 because Next's lint plugins don't support 10 yet.
 
 ## Project structure
 
@@ -114,55 +342,76 @@ amounts in whole poysha.
 apps/
   api/                 Express API
     src/
-      app.ts           builds the app (no listen), used by server.ts and tests
-      server.ts        starts listening and shuts down cleanly on SIGTERM
-      config.ts        env validation
-      http/            error envelope and middleware (request log, auth, role checks)
-      auth/            password hashing and the signed session cookie
-      domain/          pure rules with no I/O: fares, booking state machine, dispatch
-      geo/             Dhaka service area, OpenRouteService client, ×1.3 fallback
-      services/        business rules and transactions, called by the routes
+      app.ts           builds the app (no listen), used by server.ts and the tests
+      server.ts        starts listening and shuts down cleanly
+      config.ts        checks the environment variables
+      http/            error format and middleware (request log, sign-in, role checks)
+      auth/            password hashing and the signed login cookie
+      domain/          pure rules with no I/O: fares, state machine, matching, ride options
+      geo/             Dhaka area, OpenRouteService client, the × 1.3 fallback
+      services/        business rules and database transactions
       routes/          /health and /api/v1
-      db/              schema, client, migrator, seeder and their CLIs
-    drizzle/           versioned SQL migrations (generated, then reviewed)
+      db/              schema, migrations runner and seed
+    drizzle/           SQL migrations
     test/              Vitest tests against a real Postgres
-  web/                 Next.js site (App Router + Tailwind)
-docs/                  specs and diagrams
-docker-compose.yml     web + api + db
+  web/                 Next.js website (App Router + Tailwind)
+docs/                  specs, diagrams, Low-Level Designs, screenshots, deployment guide
+docker-compose.yml     website + API + database
+render.yaml            API deployment on Render
 .github/workflows/     CI
 ```
 
-npm workspaces tie the two apps together. One `package-lock.json` at the root pins everything.
+npm workspaces tie the two apps together, with one `package-lock.json` at the root.
 
 ## Prerequisites
 
-- Docker with Compose v2 (to run everything)
-- Node.js 24 and npm 11 (only to develop or run the tests on your machine)
+- Docker with Compose v2, to run everything
+- Node.js 24 and npm 11, only to develop or run the tests outside Docker
 
-## Run it with Docker
+## Environment variables
+
+Every variable is listed in [.env.example](.env.example) with a safe local default. Real
+secrets live only in the hosting dashboards, never in the repo (NFR-11).
+
+| Variable                                            | Used by     | Purpose                                                                       |
+| --------------------------------------------------- | ----------- | ----------------------------------------------------------------------------- |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | compose     | Database login; compose builds the API's database address from them           |
+| `POSTGRES_PORT`, `API_PORT`, `WEB_PORT`             | compose     | Ports on your machine                                                         |
+| `DATABASE_URL`                                      | api         | Postgres address (`postgres://…`)                                             |
+| `PORT`                                              | api         | HTTP port, default 4000                                                       |
+| `NODE_ENV`                                          | api         | `development` turns on readable logs                                          |
+| `LOG_LEVEL`                                         | api         | Log level, default `info`                                                     |
+| `SESSION_SECRET`                                    | api         | Signs the login cookie. At least 32 characters. Required.                     |
+| `COOKIE_SECURE`                                     | api         | HTTPS-only cookie; on by default when `NODE_ENV=production`                   |
+| `ORS_API_KEY`                                       | api         | OpenRouteService key. Optional: without it, distances are straight line × 1.3 |
+| `ORS_BASE_URL`                                      | api         | OpenRouteService address                                                      |
+| `DRIVER_SEARCH_RADIUS_KM`                           | api         | How far from the Tesla (straight line) a driver sees requests, default 2      |
+| `TEST_DATABASE_URL`                                 | api tests   | A separate test database, created automatically                               |
+| `API_URL`                                           | web (build) | Where the website sends `/api/v1/*`. Read at **build** time.                  |
+
+A free OpenRouteService key: [openrouteservice.org/dev/#/signup](https://openrouteservice.org/dev/#/signup).
+
+## Run it locally
+
+### With Docker (recommended)
 
 ```sh
 docker compose up --build
 ```
 
-| Service | URL                   | Notes                                      |
-| ------- | --------------------- | ------------------------------------------ |
-| web     | http://localhost:3000 | proxies `/api/v1/*` to the API             |
-| api     | http://localhost:4000 | `/health`, `/health/ready`, `/api/v1/*`    |
-| db      | localhost:5432        | Postgres 17, user/password `tesla`/`tesla` |
+| Service | Address               | Notes                                           |
+| ------- | --------------------- | ----------------------------------------------- |
+| web     | http://localhost:3000 | Open this one. It passes `/api/v1/*` to the API |
+| api     | http://localhost:4000 | `/health`, `/health/ready`, `/api/v1/*`         |
+| db      | localhost:5432        | Postgres 17, user and password `tesla`/`tesla`  |
 
-Startup order is enforced by health checks. The API waits until Postgres is ready, then
-applies migrations and loads the seed, then starts listening. The website waits until the
-API reports ready. No `.env` file is needed. To change ports or credentials, copy
-`.env.example` to `.env`.
+No `.env` file is needed. The API waits for Postgres, applies the migrations, loads the
+seed data, then starts. The website waits until the API is ready. To use real road
+distances, copy `.env.example` to `.env` and set `ORS_API_KEY` first.
 
-Road distances come from OpenRouteService when `ORS_API_KEY` is set (a free key is enough).
-Without it, every distance uses the straight-line fallback and the fare estimate says so.
-Everything still works.
+Start again from an empty database with `docker compose down -v`.
 
-Reset everything, including the database volume, with `docker compose down -v`.
-
-## Run it without Docker
+### Without Docker
 
 ```sh
 cp .env.example .env
@@ -174,657 +423,499 @@ npm run dev -w @tesla-pool/api       # http://localhost:4000, restarts on change
 npm run dev -w @tesla-pool/web       # http://localhost:3000, in a second terminal
 ```
 
-## Environment variables
+### Migrations and seed data
 
-All of them are listed in [.env.example](.env.example) with safe local defaults. Real
-secrets live only in the hosting platforms' settings (NFR-11).
+- To change the schema, edit `apps/api/src/db/schema/`, then run
+  `npm run db:generate -w @tesla-pool/api`. It writes a new SQL file in `apps/api/drizzle/`
+  to review and commit (NFR-31).
+- `npm run db:migrate -w @tesla-pool/api` applies migrations that haven't run yet. The
+  Docker container does this every time it starts.
+- `npm run db:seed -w @tesla-pool/api` loads the story cast. It's safe to repeat: existing
+  users are left alone, so a restart never wipes your demo progress.
 
-| Variable                                            | Used by     | Purpose                                                                          |
-| --------------------------------------------------- | ----------- | -------------------------------------------------------------------------------- |
-| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | compose     | Database credentials; compose also builds the API's URL from them                |
-| `POSTGRES_PORT`, `API_PORT`, `WEB_PORT`             | compose     | Host ports                                                                       |
-| `DATABASE_URL`                                      | api         | Postgres connection string (`postgres://…`)                                      |
-| `PORT`                                              | api         | HTTP port, default 4000                                                          |
-| `NODE_ENV`                                          | api         | `development` turns on pretty logs                                               |
-| `LOG_LEVEL`                                         | api         | pino level, default `info`                                                       |
-| `SESSION_SECRET`                                    | api         | Signs the login cookie; at least 32 characters. Required.                        |
-| `COOKIE_SECURE`                                     | api         | `Secure` cookie flag; defaults to on when `NODE_ENV=production`                  |
-| `ORS_API_KEY`                                       | api         | OpenRouteService key. Optional: unset means straight-line distance × 1.3         |
-| `ORS_BASE_URL`                                      | api         | OpenRouteService address, default `https://api.openrouteservice.org`             |
-| `DRIVER_SEARCH_RADIUS_KM`                           | api         | How far (straight line) from their Tesla an idle driver sees requests, default 2 |
-| `TEST_DATABASE_URL`                                 | api tests   | Separate test database, created automatically if missing                         |
-| `API_URL`                                           | web (build) | Where the proxy sends `/api/v1/*`. It's read at **build** time.                  |
-
-## Migrations and seed data
-
-- Change the schema in `apps/api/src/db/schema/`, then run
-  `npm run db:generate -w @tesla-pool/api`. That writes a new SQL file under
-  `apps/api/drizzle/`. Review it and commit it (NFR-31).
-- `npm run db:migrate -w @tesla-pool/api` applies any migrations that haven't run yet. The
-  Docker container does this on every start.
-- `npm run db:seed -w @tesla-pool/api` loads the story cast. It is idempotent: existing
-  users are left untouched, so restarting never resets your demo progress.
-
-## Tests and checks
+## Tests
 
 ```sh
-docker compose up -d db     # tests need a real Postgres
-npm test                    # Vitest, against the tesla_pool_test database
+docker compose up -d db     # the tests need a real Postgres
+npm test                    # Vitest, on its own tesla_pool_test database
 npm run lint
 npm run typecheck
 npm run format:check
 npm run build
 ```
 
-CI runs the same steps on every pull request. Tests never call the real map service: a
-local stub stands in for OpenRouteService. Concurrency tests run against a real database
-and repeat several rounds (NFR-28).
+CI runs all of these on every pull request. Tests never call the real map service; a local
+stand-in answers instead. Race tests run against a real Postgres and repeat 25 times each.
 
-Covered so far:
+What the tests cover, starting with the risks the brief names:
 
-- Liveness and readiness, including a 503 when the database is unreachable
-- The error envelope for unknown routes and malformed JSON
-- Request-id generation and safe propagation
-- Seed idempotency and password hashing, plus every cast wallet and Jashim's Bullet
-- Sign-up rules: required gender, a Tesla for drivers only, seat limits, one transaction
-- Ten simultaneous sign-ups with one email, five rounds: exactly one account each time
-- Sign-in: a wrong password and an unknown email get the same answer
-- Sessions: missing, tampered, foreign-secret and expired tokens get 401; the wrong role gets 403
-- Driver availability: no going online without a location, locations outside Dhaka refused,
-  repeated online and offline harmless
-- Road distance: routed answers cached by direction; the fallback used only for no key, an
-  error, a quota refusal, a bad body or the 10 s timeout; a slow answer still used
-- Fare estimate: the FR §8 worked examples, half-up rounding, and a case floats get wrong
-- Booking state machine: every FR §6 transition allowed, and the listed bad ones refused
-- Ride requests: validation, balance rules, a repeated request returning the same booking,
-  and ten identical requests at once (five rounds) creating exactly one
-- Access: another passenger's booking is 404; drivers get 403 on passenger routes
-- Cancel: free while waiting, safe to repeat, and logged in a history the database won't
-  let anyone edit or delete
-- Nearby requests: hidden from offline drivers and full Teslas, and outside the search
-  radius or the free seats; oldest first; never naming the passenger
-- Accept: opens a trip with its history row, or joins the one running when it fits the
-  route and the free seats; a repeat returns the same trip; a second driver gets
-  `ALREADY_CLAIMED`; offline and out-of-range accepts refused
-- Trip steps: arrive, start and complete in order, each repeat harmless, skipped steps
-  refused, another driver's passenger 404
-- Final fare: the FR §8 pooled examples (116.00, 174.00, 182.70), capped at the estimate,
-  stored with its breakdown in a table the database won't let anyone change
-- Driver cancel: the request returns to waiting for every driver, keeping its pool in the
-  history; not allowed once the passenger is aboard
-- Passenger cancel after acceptance: free within 3 minutes and recorded as `late_cancel`
-  after, by the database clock; refused once the trip starts
-- A driver with a passenger can't go offline or move their Tesla
-- Seat limit: Bullet fills seat by seat and then refuses; every way out of a trip frees
-  its seats once; raw SQL can't overfill a Tesla; an accept against an out-of-date Tesla
-  gets `POOL_CHANGED`; co-passengers never see each other
-- Matching rule (FR-L3): each reason a request is turned away, the pickup the driver waits
-  at staying first, the shortest route winning, and ties settled the same way every time
-- Nusrat and Rafiq's pooled trip end to end: Rafiq listed as adding 0.970 km, the four
-  stops in order, and fares of ৳ 52.02 and ৳ 71.42 that match the hand calculation below;
-  the old Mohakhali pin turning Rafiq away
-- Route stops: steps out of order refused with `OUT_OF_STOP_ORDER`; readings recorded at
-  pickup and drop-off, which the database won't let anyone change; either cancel removing
-  the passenger's stops and shortening the route; an accept planned against an older route
-  refused
-- Road distances for a route: one matrix request for every pair, cached; the fallback per
-  pair; at most 3 map requests per list refresh, the rest checked on the next one
-- Races, 25 rounds each against Postgres: Nusrat and Shirin for the last seat (exactly one
-  wins); five accepts into one Tesla (never more than 3); accepts racing steps and cancels
-  (seats and route stay right, no deadlock); three drivers for one request (one wins); a
-  double-tapped accept (one trip); five requests from one passenger (one booking). After
-  each round, every trip's stops are checked against its bookings.
-- Wallet: top-ups, a repeated top-up adding once, amount and balance limits, drivers
-  refused; the history in cursor pages with no gaps or repeats; the database refusing to
-  edit or delete a ledger entry
-- Settlement: TeslaPay moving the fare from passenger to driver, Cash recorded as the
-  driver's earnings only, and Nusrat and Rafiq's pooled TeslaPay ride leaving ৳ 447.98,
-  ৳ 428.58 and ৳ 123.44
-- Fines: free within 3 minutes of acceptance and 30 tk after, for Cash and TeslaPay alike;
-  a fine taking a balance below zero, which blocks requests until a top-up
-- No-show: refused before 5 minutes, then cancelling, fining, freeing the seats and
-  re-planning a shared route; a repeat fining once
-- Driver penalties: none within 3 minutes, one record after, never a fine for the passenger
-- Money races, 25 rounds each: a double-tapped late cancel or complete, a passenger cancel
-  against a no-show, ten copies of one top-up, ten different top-ups, and settlements
-  beside top-ups. After each round every balance must equal its ledger.
-- Ride history: ended rides newest first, each with its stored breakdown or fine and never
-  the ride in progress; cursor pages with no gaps or repeats; nothing about a co-passenger,
-  and nothing of anyone else's
-- Driver history: the pooled trip with both fares and the cash and TeslaPay split; drops,
-  penalties, cancels and no-shows each shown for what they were; other drivers' trips and
-  the trip in progress 404; earnings equal to the sum of the trips and to the ledger
+- **Bullet's capacity can never be exceeded.** Seats fill one by one and then refuse. Five
+  accepts fired at once never put more than 3 people in Bullet. Raw SQL can't overfill a
+  Tesla either, because a CHECK constraint stops it.
+- **Two requests at once can't corrupt capacity.** Nusrat and Shirin race for the last
+  seat and exactly one wins. Three drivers race for one request and one wins. Accepts race
+  against steps and cancels. After every round, each Tesla's seats taken must equal the
+  seats of the bookings it carries.
+- **Invalid state changes are refused.** Every allowed change in the booking state machine
+  works, and skipped or repeated steps, wrong actors and out-of-order stops are refused.
+- **Nusrat's and Rafiq's pooled fares are right.** ৳ 52.02 and ৳ 71.42 with no map key,
+  matching the hand calculation below, and the FR §8 worked examples.
+- **Nobody can touch another user's ride.** Another passenger's booking or another driver's
+  trip is 404. The wrong role gets 403. A passenger never sees a co-passenger.
+- **Cancellation rules hold.** Free while waiting and for 3 minutes after acceptance, then a
+  30 tk fine, by the database clock. No-show only after 5 minutes. Late driver cancels
+  record a penalty.
+- **Money stays correct.** Double-tapped cancels, completes and top-ups charge once. After
+  every race round, each wallet balance equals the sum of its ledger.
+- Also covered: sign-up and sign-in, sessions, the error format, road distances and the
+  fallback, the matching rule, ride options, history paging, and seed idempotency.
 
 ## Demo credentials
 
 Every seeded account uses the password **`TeslaPool#2026`**.
 
-| Name   | Email                 | Role      | Gender |
-| ------ | --------------------- | --------- | ------ |
-| Jashim | jashim@teslapool.test | driver    | male   |
-| Nusrat | nusrat@teslapool.test | passenger | female |
-| Rafiq  | rafiq@teslapool.test  | passenger | male   |
-| Shirin | shirin@teslapool.test | passenger | female |
+| Name   | Email                 | Role      | Gender | Starting TeslaPay | Why                                               |
+| ------ | --------------------- | --------- | ------ | ----------------- | ------------------------------------------------- |
+| Jashim | jashim@teslapool.test | driver    | male   | ৳ 0.00            | Drives Bullet (3 seats), parked at Banani Road 11 |
+| Nusrat | nusrat@teslapool.test | passenger | female | ৳ 500.00          | Pays the pooled ride by TeslaPay                  |
+| Rafiq  | rafiq@teslapool.test  | passenger | male   | ৳ 500.00          | Pays the pooled ride by TeslaPay                  |
+| Shirin | shirin@teslapool.test | passenger | female | ৳ 20.00           | A 30 tk fine takes her below zero                 |
 
-To skip typing them in, use **Try the demo** on the home page (http://localhost:3000) or
-the demo buttons under the sign-in form. One tap signs you in as that account. Otherwise
-sign in at http://localhost:3000/login. A browser holds one session at a time, so use a
-private window to be the driver and a passenger at once. Jashim drives the Tesla "Bullet" (3 seats), which
-starts offline at Banani Road 11. The seed tops up the passengers' TeslaPay wallets, each
-through a ledger entry:
+### How the demo accounts work in the website
 
-| Name   | Starting balance | Why                                                          |
-| ------ | ---------------- | ------------------------------------------------------------ |
-| Nusrat | ৳ 500.00         | Pays the pooled ride by TeslaPay                             |
-| Rafiq  | ৳ 500.00         | Pays the pooled ride by TeslaPay                             |
-| Shirin | ৳ 20.00          | A 30 tk fine takes her below zero, which blocks new requests |
-| Jashim | ৳ 0.00           | Earns from rides                                             |
+You never need to type these in.
 
-To try a ride: sign in as Jashim and go online. In another browser, sign in as Nusrat and
-set the pickup to Banani Road 11: her map shows Bullet among the Teslas within 2 km, for
-looking only. Choose Mohakhali, get the estimate and request the ride. Within a few
-seconds it appears in Jashim's nearby requests. **See route** draws her trip by road on his
-map. Accept it, and his route by road runs from Bullet through the stops. Then then tap **Arrived at pickup**, **start trip** and **complete trip**.
-On Jashim's map, Bullet glides to the pickup when he arrives and to the drop-off when he
-completes, and arrows show the order of the stops. Nusrat's screen follows each step and
-ends with the fare to pay in cash and how it was worked out. To see a driver cancel, tap
-**Cancel ride** before starting: the request goes back to waiting and Nusrat is told why.
+- The **home page** has a **Try the demo** section with one button per person. Tap one and
+  you are signed in as them.
+- The **sign-in page** shows the same buttons under the form.
 
-To see a pooled ride: with Jashim online at Banani Road 11, have Nusrat request Banani Road
-11 → Mohakhali and accept it. What Rafiq requests next depends on whether a map key is set
-([both worked out below](#pooling)):
+The buttons use the normal sign-in (`POST /api/v1/auth/login`) with the password above, so
+nothing on the server is special for demo accounts. The list lives in
+[`apps/web/src/lib/demo.ts`](apps/web/src/lib/demo.ts) and the buttons in
+[`apps/web/src/components/DemoAccounts.tsx`](apps/web/src/components/DemoAccounts.tsx).
 
-- **No map key.** Have Rafiq request Banani Road 11 → Gulshan 1. Jashim sees it under
-  **Requests on your route**, adding 0.970 km. Accept it: the route lists Nusrat's pickup,
-  Rafiq's pickup, Nusrat's drop-off, then Rafiq's, and only the next stop has a button.
-  Take the steps in order. Nusrat pays ৳ 52.02 and Rafiq ৳ 71.42, and each sees only their
-  own fare. Choose TeslaPay for both, and their wallets end at ৳ 447.98 and ৳ 428.58 while
-  Jashim's reaches ৳ 123.44.
-- **With an OpenRouteService key.** Banani Road 11 → Gulshan 1 is refused by road: it would
-  be a 1.15 km detour, over the 1 km limit, so Jashim never sees it. Instead, have Rafiq
-  choose the **Airport Road** quick pick as his destination, which lies on Nusrat's road.
-  Jashim sees it adding 0.001 km, and **See route** draws Rafiq's trip in violet on top of
-  Jashim's route. Accept it: Rafiq is dropped first, and the pair pay ৳ 78.90 and ৳ 56.72
-  (as measured on 26 Sep 2026).
+A browser holds one sign-in at a time. To be the driver and a passenger together, use a
+normal window for one and a private window for the other.
 
-To see a same-gender pool: with Jashim online at Banani Road 11, have Nusrat request Banani
-Road 11 → Mohakhali as **Same-gender** and accept it. Jashim's trip is marked **Women
-only**. Have Shirin request the same trip, Same-gender and Cash, and Rafiq request Banani
-Road 11 → Gulshan 1 as Pool. Only Shirin's request is listed. Accept it and take the
-steps: each woman pays ৳ 54.62 ([worked out below](#ride-options)). Once both are dropped
-off, Rafiq's request appears.
+### Things to try
 
-To see a solo ride: have Rafiq request Banani Road 11 → Gulshan 1 as **Solo** and accept
-it. Jashim's trip is marked **Solo ride**, and his request list stays empty until Rafiq is
-dropped off. Rafiq pays his estimate, ৳ 87.10.
+**A single ride.** Sign in as Jashim and tap **Go online**. In a private window, sign in as
+Nusrat, set the pickup to **Banani Road 11** and the destination to **Mohakhali**, get the
+estimate and request it. Within a few seconds it appears for Jashim. **See route** draws her
+trip on his map. Accept it, then tap **Arrived at pickup**, **start trip** and **complete
+trip**. Nusrat's screen follows each step and ends with her fare, worked out.
 
-To see a late-cancel fine: have Shirin request a Cash ride and Jashim accept it. After
-3 minutes her screen says cancelling now costs ৳ 30.00. Cancel: she is fined, her balance
-goes from ৳ 20.00 to -৳ 10.00, and the request form asks her to top up first. Top up
-৳ 10.00 or more on the Wallet page and she can ride again. To skip the wait, move the
-acceptance back in the database:
+**A pooled ride.** With Jashim online at Banani Road 11, have Nusrat request Banani Road 11 →
+Mohakhali and accept it. Rafiq's destination depends on whether a map key is set (both
+[worked out below](#pooling)):
+
+- **With a key** (the live site): Rafiq picks the **Airport Road** quick pick. Jashim sees
+  it under **Requests on your route**, adding 0.001 km. Accept it. Rafiq is dropped first,
+  and they pay ৳ 56.72 and ৳ 78.90. Each sees only their own fare.
+- **With no key** (a fresh `docker compose up`): Rafiq picks **Gulshan 1**. It adds
+  0.970 km. Nusrat pays ৳ 52.02 and Rafiq ৳ 71.42. Paid by TeslaPay, their wallets end at
+  ৳ 447.98 and ৳ 428.58, and Jashim's at ৳ 123.44.
+
+**The last-seat race.** With Jashim online, have Rafiq request 2 seats and accept it: Bullet
+shows 2 of 3 seats taken. Then Nusrat and Shirin each request 1 seat along Rafiq's way. Open
+Jashim's screen in two tabs and tap **Accept** on a different request in each, at the same
+moment. One gets the seat; the other is told there's no free seat any more.
+
+**Same-gender pool.** Nusrat and Shirin both request Banani Road 11 → Mohakhali as
+**Same-gender**, and Rafiq requests a Pool ride. After Jashim accepts Nusrat, only Shirin's
+request is listed. Rafiq's appears once both women are dropped off. Trip marked **Women
+only**.
+
+**Solo.** Rafiq requests **Solo**. While he rides, Jashim sees no other requests. He pays his
+estimate (the Solo price is +15%).
+
+**A late-cancel fine.** Shirin requests a Cash ride and Jashim accepts. After 3 minutes her
+screen says cancelling now costs ৳ 30.00. Cancelling takes her from ৳ 20.00 to −৳ 10.00, and
+she can't request again until she tops up on the **Wallet** page. To skip the wait locally:
 `docker compose exec db psql -U tesla -d tesla_pool -c "UPDATE bookings SET accepted_at = accepted_at - interval '3 minutes' WHERE status = 'ACCEPTED'"`.
 
-To see a no-show: accept a ride and tap **Arrived at pickup**. After 5 minutes a
-**No-show** button appears (or move `arrived_at` back the same way). It cancels the ride
-and fines the passenger ৳ 30.00. A driver who cancels more than 3 minutes after accepting
-is warned first, and a penalty is recorded against them.
+**A no-show.** Accept a ride and tap **Arrived at pickup**. After 5 minutes a **No-show**
+button appears. It cancels the ride and fines the passenger ৳ 30.00.
 
-To see the history: after any of the rides above, open **History**. Nusrat sees each of her
-rides that has ended, newest first; open one for its times and the fare worked out step by
-step, or the fine. Jashim sees his earnings, split into cash and TeslaPay, and every
-finished trip; open one for each passenger, how their part ended and their fare. After the
-pooled ride his earnings read ৳ 123.44: ৳ 52.02 from Nusrat and ৳ 71.42 from Rafiq.
+**History.** Nusrat's **History** lists her finished rides, each with its fare step by step.
+Jashim's shows his earnings split into Cash and TeslaPay, and every past trip.
 
-To see the last-seat race: with Jashim online at Banani Road 11, have Rafiq request 2 seats
-to Gulshan 1 and accept it. Bullet shows 2 of 3 seats taken. Then have Nusrat and Shirin
-each request 1 seat from Banani Road 11 to Mohakhali, which is on Rafiq's way. Open
-Jashim's screen in two tabs and tap **Accept** on a different request in each at the same
-moment. One gets the seat; the other is told there is no free seat any more, and Bullet
-shows 3 of 3.
+After a trip, Bullet stays where it ended. Set Jashim's location back to **Banani Road 11**
+before replaying a story.
+
+## Deployment
+
+**Live site: https://dhaka-tesla-pool-omega.vercel.app**
+
+| Part     | Where                    | Address                                                                           |
+| -------- | ------------------------ | --------------------------------------------------------------------------------- |
+| Website  | Vercel                   | https://dhaka-tesla-pool-omega.vercel.app                                         |
+| API      | Render, Singapore (free) | Reached through the website: `https://dhaka-tesla-pool-omega.vercel.app/api/v1/…` |
+| Database | Neon, Singapore (free)   | Private                                                                           |
+
+Checked on 27 Sep 2026 by running the pooled ride on the live site. Nusrat (Banani Road 11 →
+Mohakhali, TeslaPay) and a second passenger (Banani Road 11 → Airport Road, Cash) shared
+Bullet. They paid ৳ 78.90 and ৳ 56.72, as in [Example 2](#pooling), and Jashim's earnings
+read ৳ 135.62.
+
+The live site has an OpenRouteService key, so maps show real roads and the
+[with-key pooling example](#pooling) applies.
+
+**The first visit can be slow.** The free API server sleeps after 15 minutes with no
+visitors and takes about a minute to wake. If the first sign-in hangs, wait a moment and
+try again.
+
+Deploying it yourself takes about 15 minutes on free accounts: see the
+[deployment guide](docs/deployment.md). A push to `pre-release` redeploys both the website
+and the API, and the API applies any new migrations as it starts.
 
 ## API overview
 
-REST over JSON. Everything is under `/api/v1` except the health checks (NFR-34). The full
-list of routes is in [the API routes spec](docs/Dhaka_Tesla_Pool_API_Routes.md).
+REST over JSON. We picked REST because every action maps cleanly to a resource and a verb
+(request a booking, accept it, cancel it), and plain HTTP is easy to test with `fetch`.
 
-| Method | Route           | Returns                                                                         |
-| ------ | --------------- | ------------------------------------------------------------------------------- |
-| GET    | `/health`       | `200 { "status": "ok" }` while the process is up                                |
-| GET    | `/health/ready` | `200 { "status": "ok", "database": "up" }`, or `503` if Postgres is unreachable |
+Everything is under `/api/v1` except the two health checks. Full request and response
+shapes are in [the API Routes spec](docs/Dhaka_Tesla_Pool_API_Routes.md) and each phase's
+Low-Level Design.
 
-Accounts (phase 1), all under `/api/v1`:
+| Who       | Method and route                                                     | What it does                                                                |
+| --------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| anyone    | `GET /health`, `GET /health/ready`                                   | The process is up; the database answers (503 if not)                        |
+| anyone    | `POST /auth/signup`, `/auth/login`, `/auth/logout`                   | Create an account (with wallet, and a Tesla for drivers), sign in, sign out |
+| signed in | `GET /me`                                                            | The user, wallet balance, Tesla and current booking                         |
+| signed in | `GET /wallet`, `GET /wallet/transactions`                            | The balance, and every money movement (paged)                               |
+| passenger | `POST /fare-estimates`                                               | Distance, road shape and fare estimate. Books nothing.                      |
+| passenger | `GET /nearby-teslas?lat=…&lng=…`                                     | Teslas with a free seat near a pickup, rounded, no names                    |
+| passenger | `POST /bookings`                                                     | Request a ride. The same request again returns the same booking.            |
+| passenger | `GET /bookings/current`, `GET /bookings/:id`                         | The active ride (polled every 4 s), or one of your rides                    |
+| passenger | `GET /bookings/:id/path`                                             | Your ride's road, pickup to destination                                     |
+| passenger | `POST /bookings/:id/cancel`                                          | Cancel (free, or fined after 3 minutes)                                     |
+| passenger | `GET /bookings`                                                      | Ride history (paged)                                                        |
+| passenger | `POST /wallet/top-ups`                                               | Add pretend money. A repeated id adds it once.                              |
+| driver    | `GET /driver/vehicle`                                                | The Tesla: seats, seats taken, online, location                             |
+| driver    | `POST /driver/vehicle/online`, `/offline`                            | Go online or offline                                                        |
+| driver    | `PUT /driver/vehicle/location`                                       | Set where the Tesla is                                                      |
+| driver    | `GET /driver/requests`                                               | Requests nearby, or on the route once passengers are aboard                 |
+| driver    | `GET /driver/requests/:bookingId/path`                               | A request's own road, to preview it                                         |
+| driver    | `POST /driver/requests/:id/accept`                                   | Accept into the trip                                                        |
+| driver    | `GET /driver/pool`, `GET /driver/pool/path`                          | The current trip, its stops and its road                                    |
+| driver    | `POST /driver/bookings/:id/arrive`, `/start`, `/complete`            | The next step for one passenger                                             |
+| driver    | `POST /driver/bookings/:id/cancel`, `/no-show`                       | Drop a passenger before pickup, or mark a no-show                           |
+| driver    | `GET /driver/pools`, `GET /driver/pools/:id`, `GET /driver/earnings` | Past trips and earnings                                                     |
 
-| Method | Route          | Does                                                                       | Errors                         |
-| ------ | -------------- | -------------------------------------------------------------------------- | ------------------------------ |
-| POST   | `/auth/signup` | Creates the account, its wallet and a driver's Tesla; signs in. **201**    | 400, 409 `EMAIL_TAKEN`         |
-| POST   | `/auth/login`  | Signs in with email and password. **200**                                  | 400, 401 `INVALID_CREDENTIALS` |
-| POST   | `/auth/logout` | Clears the session cookie. **204**, with or without a session              | —                              |
-| GET    | `/me`          | The user, `wallet.balance` as a string (`"0.00"`), and the Tesla or `null` | 401 `UNAUTHENTICATED`          |
-
-Signing in sets `tp_session`, an HttpOnly, SameSite=Lax cookie that lasts 24 hours
-(NFR-6). It holds a signed token (HS256 JWT), so there is no sessions table. Request and
-response shapes are in the [phase 1 LLD](docs/lld/phase-1-accounts.md#4-routes).
-
-Ride requests (phase 2), all under `/api/v1`:
-
-| Method | Route                      | Who       | Does                                                                     | Errors                                                                               |
-| ------ | -------------------------- | --------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| GET    | `/driver/vehicle`          | driver    | The Tesla: seats, `isOnline`, `location`                                 | 404                                                                                  |
-| POST   | `/driver/vehicle/online`   | driver    | Goes online; repeating it is harmless                                    | 422 `LOCATION_REQUIRED`                                                              |
-| POST   | `/driver/vehicle/offline`  | driver    | Goes offline; repeating it is harmless                                   | —                                                                                    |
-| PUT    | `/driver/vehicle/location` | driver    | Sets `{ lat, lng }` inside Dhaka                                         | 400                                                                                  |
-| POST   | `/fare-estimates`          | passenger | Road distance and estimate, every step as a string. Books nothing.       | 400                                                                                  |
-| POST   | `/bookings`                | passenger | Requests a ride. **201**; the same request again returns it with **200** | 400, 409 `ACTIVE_BOOKING_EXISTS`, 422 `NEGATIVE_BALANCE`, 422 `INSUFFICIENT_BALANCE` |
-| GET    | `/bookings/current`        | passenger | The active booking or `null`; the app polls it every 4 s                 | —                                                                                    |
-| GET    | `/bookings/:id`            | passenger | One of the passenger's own bookings                                      | 404                                                                                  |
-| POST   | `/bookings/:id/cancel`     | passenger | Cancels a waiting request for free; repeating it is harmless             | 404, 409 `INVALID_TRANSITION`                                                        |
-
-A route for the other role returns 403, and no session returns 401. `/me` also returns the
-passenger's `currentBooking`. Shapes and rules are in the
-[phase 2 LLD](docs/lld/phase-2-ride-request.md#3-routes).
-
-Driver flow (phase 3), all under `/api/v1`:
-
-| Method | Route                           | Who    | Does                                                                               | Errors                                                                                                                       |
-| ------ | ------------------------------- | ------ | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/driver/requests`              | driver | Open requests near an online, idle Tesla, oldest first; polled every 4 s           | —                                                                                                                            |
-| POST   | `/driver/requests/:id/accept`   | driver | Accepts the request into a new trip; a repeat returns the same trip                | 404, 409 `ALREADY_CLAIMED`, 409 `SEATS_UNAVAILABLE`, 409 `INVALID_TRANSITION`, 422 `DRIVER_OFFLINE`, 422 `NO_LONGER_MATCHES` |
-| GET    | `/driver/pool`                  | driver | The trip in progress: each passenger, their seats, status and next step, or `null` | —                                                                                                                            |
-| POST   | `/driver/bookings/:id/arrive`   | driver | ACCEPTED → DRIVER_ARRIVED                                                          | 404, 409 `INVALID_TRANSITION`                                                                                                |
-| POST   | `/driver/bookings/:id/start`    | driver | DRIVER_ARRIVED → STARTED                                                           | 404, 409 `INVALID_TRANSITION`                                                                                                |
-| POST   | `/driver/bookings/:id/complete` | driver | STARTED → COMPLETED; records and returns the fare                                  | 404, 409 `INVALID_TRANSITION`                                                                                                |
-| POST   | `/driver/bookings/:id/cancel`   | driver | Before pickup: the request goes back to waiting for any driver                     | 404, 409 `INVALID_TRANSITION`                                                                                                |
-
-Phase 3 also changes three phase 2 routes. Going offline or moving the Tesla returns 409
-`HAS_ACTIVE_BOOKINGS` while it has a passenger. A passenger can cancel until the trip
-starts. The booking body gains the driver and Tesla, each step's time, `freeCancelUntil`, a
-`notice` after a driver cancel, and the `fare` breakdown once completed. Shapes and rules
-are in the [phase 3 LLD](docs/lld/phase-3-driver-flow.md#3-routes).
-
-Seats and concurrency (phase 4) adds no routes. A Tesla with free seats keeps seeing
-requests that fit them, and an accept joins the trip already running. `GET /driver/vehicle`
-gains `occupiedSeats`, and the trip body gains `seats: { capacity, taken }`. An accept can
-now also fail with 409 `POOL_CHANGED` when the Tesla changed while it was being accepted.
-Shapes and rules are in the [phase 4 LLD](docs/lld/phase-4-seat-capacity.md#3-routes).
-
-Pooling (phase 5) adds no routes either. A Tesla with passengers lists only requests that
-fit its route, each with `addedKm`, and an accept that doesn't fit gets 422
-`NO_LONGER_MATCHES`. The trip body gains `stops` (in order, each with its planned km, its
-reading once reached, and `isNext`) and `odometerKm`, and each passenger gains `canAct`.
-Arrive and complete return 409 `OUT_OF_STOP_ORDER` unless that passenger's stop is next.
-The fare breakdown gains `routeDistanceMethod`. Shapes and rules are in the
-[phase 5 LLD](docs/lld/phase-5-tesla-pooling.md#3-routes).
-
-TeslaPay and fines (phase 6), all under `/api/v1`:
-
-| Method | Route                          | Who       | Does                                                                             | Errors                                                                     |
-| ------ | ------------------------------ | --------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| GET    | `/wallet`                      | anyone    | The balance, as a string                                                         | —                                                                          |
-| GET    | `/wallet/transactions`         | anyone    | Every money movement, newest first, `?cursor=…&limit=…` (1–50, default 20)       | 400                                                                        |
-| POST   | `/wallet/top-ups`              | passenger | Adds `{ id, amount }` of pretend money. **201**; the same id again gives **200** | 400, 422 `BALANCE_LIMIT`                                                   |
-| POST   | `/driver/bookings/:id/no-show` | driver    | DRIVER_ARRIVED → CANCELLED 5 minutes after arriving; fines the passenger         | 404, 409 `INVALID_TRANSITION`, 409 `POOL_CHANGED`, 422 `NO_SHOW_TOO_EARLY` |
-
-Completing a ride now pays for it, and a passenger cancel more than 3 minutes after
-acceptance is fined. The booking body gains `cancelFine` and `fine`, each trip passenger
-gains `noShowFrom`, `canNoShow`, `penaltyFrom` and `cancelRecordsPenalty`, and the Tesla
-gains `penaltyCount`. Shapes and rules are in the
-[phase 6 LLD](docs/lld/phase-6-teslapay.md#3-routes).
-
-History and earnings (phase 8), all under `/api/v1`:
-
-| Method | Route               | Who       | Does                                                                                    | Errors |
-| ------ | ------------------- | --------- | --------------------------------------------------------------------------------------- | ------ |
-| GET    | `/bookings`         | passenger | Rides that have ended, newest first, each as `/bookings/:id` returns it; paged          | 400    |
-| GET    | `/driver/pools`     | driver    | Finished trips, newest first, each with its passenger count and earnings; paged         | 400    |
-| GET    | `/driver/pools/:id` | driver    | One finished trip: every passenger, how their part ended, their fare, any penalty       | 404    |
-| GET    | `/driver/earnings`  | driver    | Total earnings over all time, split into `cash` and `teslapay`, and the number of rides | —      |
-
-Lists take `?cursor=…&limit=…` (1–50, default 20). The trip in progress is left out of
-the list and is 404 by id, as is another driver's trip. Shapes and rules are in the
-[phase 8 LLD](docs/lld/phase-8-history.md#3-routes).
-
-Nearby Teslas (added after phase 8), under `/api/v1`:
-
-| Method | Route                        | Who       | Does                                                                            | Errors |
-| ------ | ---------------------------- | --------- | ------------------------------------------------------------------------------- | ------ |
-| GET    | `/nearby-teslas?lat=…&lng=…` | passenger | `{ radiusKm, teslas: [{ lat, lng }] }`: online Teslas with a free seat, rounded | 400    |
-
-Each Tesla is at its latest checkpoint: the pickup it waits at, else the last stop it
-reached, else its saved location. Points are rounded to about 110 m and carry no id or
-name, and a passenger can't choose one. Details are in the
-[nearby Teslas LLD](docs/lld/passenger-nearby-teslas.md).
-
-Road routes (added after phase 8), under `/api/v1`, for drawing only:
-
-| Method | Route                              | Who       | Does                                                           | Errors   |
-| ------ | ---------------------------------- | --------- | -------------------------------------------------------------- | -------- |
-| POST   | `/fare-estimates`                  | passenger | Also returns `path: { legs }`, the trip's road                 | as above |
-| GET    | `/bookings/:id/path`               | passenger | `{ legs }`: the ride's own road, pickup to destination         | 404      |
-| GET    | `/driver/pool/path`                | driver    | `{ legs }`: the road from Bullet through each stop not reached | —        |
-| GET    | `/driver/requests/:bookingId/path` | driver    | `{ legs }`: an open request's road, pickup to destination      | 404      |
-
-Each leg is `{ method, points: [[lat, lng], …] }`, with `method` `routed` or `fallback` (a
-straight line, when the map service can't answer). Shapes come from OpenRouteService once
-per leg and are cached. A passenger never gets the shared trip's route. Details are in the
-[route-paths LLD](docs/lld/route-paths.md).
-
-Every error has the same shape (NFR-35):
+**Errors** always look like this (NFR-35):
 
 ```json
-{ "error": { "code": "VALIDATION_ERROR", "message": "…", "details": [] } }
+{ "error": { "code": "SEATS_UNAVAILABLE", "message": "…", "details": [] } }
 ```
 
-Every response carries an `X-Request-Id` header, and the same id appears on that
-request's log line (NFR-42).
+- 400: bad input
+- 401: not signed in
+- 403: the wrong role
+- 404: not found, or someone else's
+- 409: a conflict, such as `ALREADY_CLAIMED`, `SEATS_UNAVAILABLE`, `POOL_CHANGED` or `INVALID_TRANSITION`
+- 422: a business rule, such as `NEGATIVE_BALANCE` or `NO_LONGER_MATCHES`
 
-## Pooling
+Every response carries an `X-Request-Id`, which also appears in that request's log line.
 
-**The route.** Each trip has an ordered list of stops: a pickup and a drop-off for every
-passenger. Each stop has its km along the trip, counted from where Bullet stood when the
-trip began. When the driver starts or completes a passenger's ride, that stop's planned km
-becomes its reading, and the database refuses any later change to it (FR-L5, NFR-41). The
-driver takes the stops in order.
+## Key decisions and trade-offs
 
-**The matching rule (FR-L3).** A request joins a trip with passengers only if its stops can
-go into the remaining route so that:
+### The ride lifecycle
 
-1. the pickup lies on the route ahead: visiting it adds at most 1 km to the leg it joins;
-2. the drop-off lies on the route after the pickup in the same way, or past the route's
-   end, which may extend towards it but not branch off;
-3. nobody's ride, including the newcomer's, grows more than 1 km beyond their direct
-   distance;
-4. nobody would pay more than their estimate: `detour ≤ 0.4 × shared km`, which is the fare
-   formula rearranged;
+`REQUESTED → ACCEPTED → DRIVER_ARRIVED → STARTED → COMPLETED`, and `CANCELLED` from any
+step before `STARTED`. We merged the brief's "MATCHED" into `ACCEPTED`, because here a match
+only exists once a driver accepts. A driver cancel sends the booking back to `REQUESTED`, so
+another driver can take it.
+
+Every change is one `UPDATE … WHERE id = ? AND status = <expected>`, plus a
+`booking_status_history` row in the same transaction. Anything else is refused.
+
+### Pooling
+
+**The route.** Each trip has a list of stops in order: a pickup and a drop-off for each
+passenger. Each stop has its km along the trip, like an odometer reading. When the driver
+reaches a stop, its reading is stored and can never change (FR-L5, NFR-41).
+
+**The matching rule (FR-L3).** A new request joins a trip with passengers only if:
+
+1. its pickup is on the route ahead (visiting it adds at most 1 km),
+2. its drop-off is on the route after the pickup, or past the route's end in the same
+   direction,
+3. nobody's ride, the newcomer's included, grows more than 1 km beyond their direct trip,
+4. nobody would pay more than their estimate (`detour ≤ 0.4 × shared km`, the fare formula
+   rearranged), and
 5. there are enough free seats.
 
-Every place for the two new stops is tried, and the one that makes the route shortest wins.
-The rule lives in [`domain/matching.ts`](apps/api/src/domain/matching.ts), which does no
-I/O, so it is tested on its own (NFR-26). A route check needs many road distances, so it
-makes one OpenRouteService matrix request for all of them and caches the answers. Each
-refresh of the driver's list makes at most 3 such requests (NFR-3).
+Every place for the two new stops is tried, and the shortest route wins. The rule lives in
+[`domain/matching.ts`](apps/api/src/domain/matching.ts), with no database or network code,
+so it's easy to test (NFR-26).
 
-**Nusrat and Rafiq's trip (FR-L4).** Both start at Banani Road 11, where Bullet waits, and
-Jashim accepts Nusrat first. The result depends on how distances are measured, so there
-are two worked examples: one with no map key, which anyone can reproduce, and one with an
-OpenRouteService key, on real roads.
+**Nusrat and Rafiq's trip.** Whether they pool depends on how distance is measured, so there
+are two worked examples.
 
-**Example 1: no map key (straight-line × 1.3).** Banani → Mohakhali 1.835 km, Banani →
-Gulshan 1 2.287 km, Mohakhali → Gulshan 1 0.970 km.
+**Example 1: no map key** (straight line × 1.3). Banani → Mohakhali 1.835 km, Banani →
+Gulshan 1 2.287 km, Mohakhali → Gulshan 1 0.970 km. Dropping Nusrat first makes Rafiq's ride
+2.805 km instead of 2.287, a 0.518 km detour. That is under 1 km, and under 0.4 × 1.835 =
+0.734, so he fits.
 
-- Jashim accepts Nusrat first. The route is her pickup at 0.000 km, then her drop-off at
-  1.835 km.
-- Rafiq fits if Nusrat is dropped first: his ride is 1.835 + 0.970 = 2.805 km against a
-  direct 2.287, a 0.518 km detour. That is under 1 km and under 0.4 × 1.835 = 0.734, the
-  km he shares with Nusrat. Dropping Rafiq first would stretch Nusrat's ride by 1.422 km,
-  so it isn't allowed.
-- The route becomes: pick up Nusrat 0.000, pick up Rafiq 0.000, drop off Nusrat 1.835, drop
-  off Rafiq 2.805.
+| Fare = 30 + 20 × actual km − 8 × shared km, capped at the estimate | Nusrat             | Rafiq              |
+| ------------------------------------------------------------------ | ------------------ | ------------------ |
+| Odometer at pickup → drop-off                                      | 0.000 → 1.835      | 0.000 → 2.805      |
+| Actual km, shared km                                               | 1.835, 1.835       | 2.805, 1.835       |
+| Estimate: 30 + 20 × direct km                                      | 30 + 36.70 = 66.70 | 30 + 45.74 = 75.74 |
+| Computed                                                           | 30 + 36.70 − 14.68 | 30 + 56.10 − 14.68 |
+| **Final**                                                          | **৳ 52.02**        | **৳ 71.42**        |
 
-| Fare = (30 + 20 × actual km − 8 × shared km), capped at the estimate | Nusrat             | Rafiq              |
-| -------------------------------------------------------------------- | ------------------ | ------------------ |
-| Odometer at pickup → drop-off                                        | 0.000 → 1.835      | 0.000 → 2.805      |
-| Actual km, shared km                                                 | 1.835, 1.835       | 2.805, 1.835       |
-| Estimate: 30 + 20 × direct km                                        | 30 + 36.70 = 66.70 | 30 + 45.74 = 75.74 |
-| Computed                                                             | 30 + 36.70 − 14.68 | 30 + 56.10 − 14.68 |
-| **Final**                                                            | **৳ 52.02**        | **৳ 71.42**        |
+**Example 2: with a key** (real roads, measured on 26 Sep 2026; road data can change a
+little). By road, Rafiq to Gulshan 1 would be a 1.150 km detour, over the 1 km limit, so
+it's refused. That's the rule working, not a bug. Rafiq to **Airport Road**, a point on
+Nusrat's road, pools. His direct trip is 2.227 km, and he's dropped first.
+
+| Fare = 30 + 20 × actual km − 8 × shared km, capped at the estimate | Nusrat              | Rafiq (Airport Road) |
+| ------------------------------------------------------------------ | ------------------- | -------------------- |
+| Odometer at pickup → drop-off                                      | 0.000 → 3.336       | 0.000 → 2.227        |
+| Actual km, shared km                                               | 3.336, 2.227        | 2.227, 2.227         |
+| Estimate: 30 + 20 × direct km                                      | 30 + 66.70 = 96.70  | 30 + 44.54 = 74.54   |
+| Computed                                                           | 30 + 66.72 − 17.816 | 30 + 44.54 − 17.816  |
+| **Final**                                                          | **৳ 78.90**         | **৳ 56.72**          |
 
 Both ride 1 seat on a Pool ride, so both multipliers are 1.
 
-**Example 2: with an OpenRouteService key (real roads).** Measured on 26 Sep 2026. Road data
-changes, so a later run can differ slightly. Banani → Mohakhali 3.335 km: the road runs west
-to Airport Road, south along it, past Wireless Gate, and turns back at the divider. Banani
-→ Gulshan 1 3.061 km, Mohakhali → Gulshan 1 0.876 km, Gulshan 1 → Mohakhali 1.969 km.
+### The fare model
 
-- **Rafiq to Gulshan 1 is refused.** With Nusrat dropped first, his ride is 3.335 + 0.876 =
-  4.211 km against a direct 3.061, a 1.150 km detour. With Rafiq dropped first, Nusrat's
-  ride is 3.061 + 1.969 = 5.030 km against 3.335, a 1.695 km detour. Both are over 1 km
-  (FR-L3(c)), so the request isn't listed. This is FR-L4's defined result on real roads.
-- **Rafiq to Airport Road (23.78102, 90.40028), a point on Nusrat's road, pools.** His
-  direct trip is 2.227 km (estimate ৳ 74.54), and it adds 0.001 km to the route. The route
-  becomes: pick up Nusrat 0.000, pick up Rafiq 0.000, drop off Rafiq 2.227, drop off
-  Nusrat 3.336. Nusrat's detour is 0.001 km, under 1 km and under 0.4 × 2.227 = 0.891.
+```
+estimate = (30 + 20 × direct km) × seat multiplier × option multiplier
+computed = (30 + 20 × actual km − 8 × shared km) × seat multiplier × option multiplier
+final    = the lower of computed and estimate, rounded half-up to 2 decimals once
+```
 
-| Fare = (30 + 20 × actual km − 8 × shared km), capped at the estimate | Nusrat              | Rafiq (Airport Road) |
-| -------------------------------------------------------------------- | ------------------- | -------------------- |
-| Odometer at pickup → drop-off                                        | 0.000 → 3.336       | 0.000 → 2.227        |
-| Actual km, shared km                                                 | 3.336, 2.227        | 2.227, 2.227         |
-| Estimate: 30 + 20 × direct km                                        | 30 + 66.70 = 96.70  | 30 + 44.54 = 74.54   |
-| Computed                                                             | 30 + 66.72 − 17.816 | 30 + 44.54 − 17.816  |
-| **Final**                                                            | **৳ 78.90**         | **৳ 56.72**          |
+- Seat multiplier: `1 + 0.5 × (seats − 1)`. Option multiplier: Pool 1.00, Same-gender 1.05,
+  Solo 1.15.
+- "Shared km" are the km a passenger rides with someone else aboard. Sharing makes a ride
+  cheaper, and the cap means a passenger never pays more than they were quoted.
+- The maths is in [`domain/fare.ts`](apps/api/src/domain/fare.ts), with no I/O, so it can be
+  tested alone and checked by hand.
 
-The computed fares are 78.904 and 56.724 before the single half-up rounding (FR-F5).
-Airport Road is a quick pick at exactly this point, so choosing it reproduces these figures.
-A point tapped nearby gives slightly different ones.
+**How money is stored.** As `DECIMAL(10,2)` taka, with decimal maths (big.js), never floats.
+It travels over the API as strings like `"116.00"`. We chose decimal over whole poysha
+because the formula multiplies by 1.05 and 1.15. Keeping full precision until one final
+rounding makes every fare checkable by hand, and the database stores the same number the
+formula gives.
 
-**Why the Mohakhali pin moved.** At the first Mohakhali pin (23.7781, 90.4050), Gulshan 1
-branches off the way to Mohakhali, and whichever passenger is dropped second rides about
-1.5 km further than their direct trip. FR-L3 allows 1 km, so they wouldn't pool. FR §13
-left this to be checked once routing was built. Rather than loosen the rule, the Mohakhali
-quick pick moved to Wireless Gate (23.7812, 90.4090), where the road from Mohakhali to
-Gulshan 1 begins. That was judged on straight-line distances; on real roads the divider
-there still makes the detour too long (Example 2).
+### Seats and concurrency
 
-## Ride options
+The brief's problem: Bullet has one seat left, and Nusrat and Shirin both try for it at the
+same instant. Here a driver accepts requests rather than passengers picking a Tesla, so the
+race is two accepts into Bullet at once.
 
-A passenger chooses Pool, Same-gender pool (+5%) or Solo (+15%) when requesting (FR-P3,
-FR-F2). The options decide who may share the Tesla (FR-R10):
+Every rule is enforced by Postgres, not by the API's memory, so it holds with any number of
+API copies (NFR-19, NFR-20).
 
-- **Solo.** Only an empty Tesla can take a Solo request, and while the Solo passenger rides
-  nobody else joins. The driver sees no requests until the drop-off (FR-D6, FR-D7).
-- **Same-gender pool.** It shares only with passengers of the same gender. It can join a
-  Tesla only if everyone aboard shares that gender, and while it rides everyone who joins
-  must too, whatever option they chose. The driver's gender doesn't count.
-- **Pool.** Shares with anyone, as long as no Solo or Same-gender rider stands in the way.
+| Rule                                | How                                                                                                                                                                                                                                                                                      |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Seats never go over capacity        | An accept takes its seats in one statement: `UPDATE vehicles SET occupied_seats = occupied_seats + $seats … WHERE occupied_seats + $seats <= capacity`. A second accept waits for the row lock, then its `WHERE` is checked again against the new value. A CHECK constraint backs it up. |
+| Exactly one wins the last seat      | The same statement. The loser updates 0 rows and gets 409 `SEATS_UNAVAILABLE`.                                                                                                                                                                                                           |
+| One driver per request              | `UPDATE bookings … WHERE status = 'REQUESTED'`. The losing driver gets `ALREADY_CLAIMED`.                                                                                                                                                                                                |
+| Out-of-date accepts are refused     | Each Tesla has a `version`, bumped on every change. An accept planned against an old version gets `POOL_CHANGED` and can simply be tried again.                                                                                                                                          |
+| One active ride per passenger       | A partial unique index on `bookings(passenger_id)` for unfinished bookings.                                                                                                                                                                                                              |
+| Double taps                         | A repeated request or accept returns the first result. Top-ups carry an id, so a retry adds the money once.                                                                                                                                                                              |
+| No deadlocks                        | Every transaction locks in the same order: Tesla, then booking, then trip, then wallets.                                                                                                                                                                                                 |
+| No waiting on the map inside a lock | Road distances and fares are worked out before the transaction opens.                                                                                                                                                                                                                    |
 
-The rule lives in [`domain/rideOptions.ts`](apps/api/src/domain/rideOptions.ts), which does
-no I/O (NFR-26). The driver's list applies it before any road distance is asked for, so a
-request it rules out never uses one of the 3 map checks per refresh (NFR-3). An accept
-applies it again and refuses with `422 NO_LONGER_MATCHES`. Races need nothing new: every
-change to a trip's passengers bumps the Tesla's version, so an accept judged against
-passengers who have since changed is refused (FR-C3). The race tests run a Solo accept
-against a Pool accept, and a Same-gender accept against one of the other gender, 25 times
-each. A passenger's gender is read only to filter the list; it is never sent to the driver
-(NFR-9).
+**The trade-off.** The version check is optimistic. When several accepts hit one Tesla in
+the same instant, some are told `POOL_CHANGED` even though a seat was free. A driver rarely
+taps that fast, and a retry works.
 
-**Nusrat and Shirin's same-gender pool.** Both go Banani Road 11 → Mohakhali, 1 seat,
-Same-gender. With no map key, the trip is 1.835 km and both ride all of it together.
+**At larger scale** we'd keep the single-row seat claim, and move the rest as described in
+[If it goes viral](#if-dhaka-tesla-pool-goes-viral-bonus).
 
-| Same-gender, × 1.05                   | Nusrat         | Shirin      |
-| ------------------------------------- | -------------- | ----------- |
-| Estimate: (30 + 20 × 1.835) × 1.05    | 70.035 → 70.04 | 70.04       |
-| Computed: (30 + 36.70 − 14.68) × 1.05 | 54.621 → 54.62 | 54.62       |
-| **Final**                             | **৳ 54.62**    | **৳ 54.62** |
+### Other decisions
 
-**Rafiq's solo ride.** Banani Road 11 → Gulshan 1, 2.287 km, nobody shares it:
-`(30 + 20 × 2.287) × 1.15 = 87.101`, so the estimate and the final fare are both ৳ 87.10.
-
-## TeslaPay and fines
-
-**The ledger.** Every money movement is a row in `wallet_transactions`: a top-up, a fare
-payment, a driver credit, a cash earning or a fine, with its signed amount and the balance
-after it (FR-W8). A trigger refuses any `UPDATE` or `DELETE`, so mistakes are fixed by
-adding an entry (NFR-39). A wallet's balance always equals the sum of its entries, leaving
-out cash earnings: a Cash fare is paid in person, so it is recorded for the driver but
-never enters a wallet (FR-W5). One function, `postEntry` in
-[`services/wallet.ts`](apps/api/src/services/wallet.ts), moves every taka.
-
-**Paying for a ride.** Completing a TeslaPay ride takes the final fare from the passenger
-and credits it to the driver, in the transaction that records the fare (FR-W4, NFR-14).
-The fare payment can't take a balance below zero. It never needs to: the balance covered
-the estimate when the ride was requested (FR-W3), and the final fare never exceeds it.
-
-**Fines.** A passenger who cancels more than 3 minutes after a driver accepted, or whom the
-driver marks as a no-show 5 minutes after arriving, is fined 30 tk, whatever the payment
-method (FR-P7, FR-D11). A fine is the only thing that can take a balance below zero, and a
-negative balance blocks new requests until a top-up (FR-W6, FR-W7). Both windows are
-measured by the database clock (NFR-38). A driver who cancels more than 3 minutes after
-accepting gets a penalty record instead (FR-D13).
-
-**Double taps.** A ride is paid, credited or fined at most once: the state machine allows
-each change once, and a unique index on `(booking_id, type)` backs it up. A top-up carries
-an id made by the form, so a retry after a lost reply adds the money once (NFR-37).
-
-## History and earnings
-
-Everything the history shows was stored as it happened: each booking, its fare breakdown,
-its status history and the driver's penalties. The history only reads them, so a past fare
-is never worked out again (NFR-41), and none of it can be edited (NFR-40).
-
-- **A passenger's history** lists their completed and cancelled rides, newest first (FR-P6).
-  Each ride is the same view the ride screen uses, so it carries the breakdown of FR-P11 or
-  the fine. It never names or prices a co-passenger (FR-P8).
-- **A driver's trips** are the trips of their Tesla that have finished. Each lists every
-  passenger in it: those it completed, those who cancelled or didn't show, and those the
-  driver dropped, with a note when the drop recorded a penalty. A drop empties the booking's
-  trip, so it is found in the status history, which keeps the trip it left.
-- **Earnings** are the final fares of the driver's completed rides, split by how they were
-  paid (FR-D15). They come from the same stored fares as the trips, so the total always
-  equals the sum of the trips. The tests also check it against the ledger's cash earnings
-  and TeslaPay credits.
-
-Long lists come in pages (NFR-36). Bookings and trips carry an insertion number, `seq`, like
-the wallet ledger, and a page reads the rows after the last one sent, so none is skipped or
-repeated when new rows arrive in front.
-
-## Concurrency
-
-The PRD's problem: Bullet has one seat left, and Nusrat and Shirin both try to claim it at
-nearly the same instant, both having seen one seat free. Here a driver accepts requests
-rather than passengers picking a Tesla (FR-D8), so the race is two accepts into Bullet at
-once: two taps, two tabs, or a retry landing beside the original.
-
-**How it's handled now.** Every rule is enforced by Postgres, not by the API's memory, so
-it holds with any number of API copies (NFR-19, NFR-20).
-
-| Rule                                    | How                                                                                                                                                                                                                                                                                                                                                                                                |
-| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Seats never exceed capacity (FR-C1)     | An accept claims its seats with one statement: `UPDATE vehicles SET occupied_seats = occupied_seats + $seats, version = version + 1 WHERE id = $tesla AND is_online AND version = $seen AND occupied_seats + $seats <= capacity`. A second accept waits for the row lock, then Postgres checks its `WHERE` again against the new row. `CHECK (occupied_seats BETWEEN 0 AND capacity)` backs it up. |
-| Exactly one wins the last seat (FR-R3)  | The same statement. The loser gets 0 rows, then 409 `SEATS_UNAVAILABLE`, and its transaction changes nothing.                                                                                                                                                                                                                                                                                      |
-| Out-of-date accepts are refused (FR-C3) | Every write to a Tesla, and every step that moves its route on, bumps its `version`. An accept is checked and its route planned without locks, and committed only if the version hasn't moved; otherwise 409 `POOL_CHANGED`, try again. Completing and cancelling plan the same way and retry up to 3 times, so no transaction waits on the map service.                                           |
-| One driver per request (FR-C2)          | `UPDATE bookings … WHERE status = 'REQUESTED'`. The losing driver gets `ALREADY_CLAIMED`, and the rollback returns its seats.                                                                                                                                                                                                                                                                      |
-| Double taps (FR-C5, NFR-37)             | A repeated accept returns the same trip; a repeated request returns the same booking.                                                                                                                                                                                                                                                                                                              |
-| One active booking (FR-C6)              | A partial unique index on `bookings(passenger_id)` for unfinished states.                                                                                                                                                                                                                                                                                                                          |
-| No deadlocks (FR-C7)                    | Every transaction locks the Tesla, then the booking, then the trip, then any wallets. A passenger cancel finds its Tesla first and locks it before the booking, retrying if the booking changed Tesla in between. Settling a TeslaPay ride locks both wallets in one statement, in wallet-id order.                                                                                                |
-
-[`apps/api/test/concurrency.test.ts`](apps/api/test/concurrency.test.ts) fires each race
-with `Promise.all` against a real Postgres, 25 rounds each. After every round it checks
-that each Tesla's seats taken equal the seats of the bookings it carries.
-
-**The trade-off.** The version check is optimistic. When several accepts hit one Tesla at
-the same moment, some are told `POOL_CHANGED` even though a seat was free. One driver
-rarely taps that fast, and a retry succeeds.
-
-**What we'd change at larger scale.**
-
-- Keep the seat claim as a single-row conditional update, and shard by area so a Tesla,
-  its trip and its bookings live on one shard and the claim never spans two.
-- Serve the nearby-request list from a read replica or a geo index (Redis GEO) instead of
-  the primary; only the claim needs the primary. The same index, updated at each stop,
-  would serve a passenger's nearby Teslas, which today reads every online Tesla with a
-  free seat.
-- Push changes over WebSockets instead of polling every 4 s, so drivers act on fresher
-  lists and fewer accepts are out of date.
-- Send idempotency keys with accepts and requests, so retries across dropped connections
-  are recognised even after the first attempt finished.
-- If one shard can't keep up, queue accepts per Tesla (a partitioned log keyed by vehicle)
-  so they apply in order, with the database check still as the backstop.
+- **Polling every 4 seconds instead of WebSockets.** Simple, works through any proxy and on
+  free hosting, and is fast enough for a ride app's status changes. The cost is up to 4 s of
+  delay and more requests.
+- **Road distances with a fallback.** OpenRouteService gives real road km. If it fails, has
+  no key, runs out of quota or takes over 10 seconds, the API uses the straight line × 1.3,
+  and records which one it used. Slowness alone doesn't switch it (NFR-13). Answers are
+  cached, and stored distances and fares are never worked out again (NFR-41).
+- **At most 3 map checks per list refresh.** A driver's list refresh route-checks at most 3
+  new requests, so a busy area can't flood the map service (NFR-3).
+- **The website proxies the API.** The login cookie stays first-party and needs no CORS. The
+  cost is one extra hop, and the API address is fixed when the website is built.
+- **Stored history, never recalculated.** Fares, odometer readings, status changes and
+  the ledger are append-only, enforced by database triggers. History only reads them.
 
 ## Assumptions
 
-- **Seed genders.** The brief doesn't give genders. We assume Nusrat and Shirin are female
-  and Jashim and Rafiq are male, so a same-gender pool can be demonstrated.
-- **Ride options hold for the whole trip.** FR-R10 says no one joins a Solo booking "while
-  it is active", and anyone joining a Same-gender booking later must match. We apply this
-  to every passenger in the trip until they are dropped off or cancelled, not only to the
-  km two passengers are aboard together. A man can't join a trip with a Same-gender woman
-  in it even if his pickup comes after her drop-off.
-- **Demo password.** One shared, published password for all seeded accounts. They are
-  demo accounts, not secrets.
-- **Seat limit.** A Tesla has 1 to 6 passenger seats. The largest model, the Model X,
-  seats 6 besides the driver.
-- **Demo balances.** The seed tops up Nusrat and Rafiq with ৳ 500.00 each and Shirin with
-  ৳ 20.00, through the ledger like any top-up, so every taka is backed by an entry
-  (NFR-39). New sign-ups start at ৳ 0.00.
-- **Top-up limits.** One top-up is ৳ 1.00 to ৳ 10,000.00, and a balance can't pass
-  ৳ 100,000.00. The brief sets none; these keep `DECIMAL(10,2)` far from overflowing.
-- **A late driver cancel.** It uses the passenger's 3 minutes: a driver cancel more than
-  3 minutes after accepting records a penalty.
-- **What a penalty does.** FR §13 left it open. Penalties are recorded and the driver sees
-  their count, but nothing else happens yet.
-- **Dhaka only.** Pickups, destinations and driver locations must fall inside a box from
-  Uttara to Old Dhaka (latitude 23.65–23.95, longitude 90.30–90.55).
-- **Short trips.** Pickup and destination must be at least 100 m apart in a straight line.
-- **Seats.** A request can't ask for more seats than the largest registered Tesla has.
-- **Bullet's start.** The seed parks Bullet at Banani Road 11, where the story begins.
-  After a trip, Bullet stays where the trip ended, so set Jashim's location back to Banani
-  Road 11 before replaying a story.
-- **Where a trip leaves the Tesla.** When a trip ends, its Tesla is left at the last stop
-  reached, or at the pickup where the driver waited for a no-show, so the next requests are
-  found from there. Before any stop is reached, it stays where it was. The driver can still
-  move it by hand between trips (FR-D4).
-- **Two rules arrive early.** One active booking per passenger (FR-C6) and the balance
-  checks (FR-W3, FR-W7) were planned for phases 4 and 6. They are enforced from phase 2
-  because creating a request depends on them.
-- **The Mohakhali pin.** The Mohakhali quick pick is Wireless Gate, so Nusrat's and
-  Rafiq's story trips pool under the matching rule with no map key ([why](#pooling)).
-- **The Airport Road pin.** With a map key they don't pool, so the Airport Road quick pick
-  sits on Nusrat's road to Mohakhali, for a second ride that pools on real roads
-  ([Example 2](#pooling)).
-- **Where a trip's km start.** A trip's odometer reads 0 where the Tesla stood when the trip
-  began. Two stops at the same place are 0 km apart, with no map request.
-- **Nearby means a straight line.** The 2 km search radius is measured as the crow flies
-  from the Tesla, so refreshing the list never waits on the map service.
-- **A cancelled pickup's km.** If a passenger cancels while the driver waits at their
-  pickup, the route is planned again from the last stop reached. The km driven to that
-  pickup aren't charged to anyone still aboard.
-- **History shows what has ended.** Past rides and past trips list only what is finished.
-  The ride or trip in progress stays on the main screen.
-- **Earnings before the ledger.** Rides completed before the wallet ledger existed (phase 6)
-  have a fare but no ledger entry. They still count as earnings, since earnings are summed
-  from the stored fares.
-- **Stop searching.** After a driver cancel, the passenger's request waits again and their
-  screen says why. Cancelling a waiting request is free, which serves as the "stop
-  searching" option FR §13 left to the design.
+The brief leaves some things open. These are our choices.
+
+- **Genders.** The story doesn't give them. Nusrat and Shirin are female, Jashim and Rafiq
+  male, so a same-gender pool can be shown.
+- **Who picks.** Passengers don't choose a Tesla; a nearby driver accepts. The passenger can
+  see nearby Teslas, just not pick one.
+- **Ride options last the whole trip.** No one joins while a Solo passenger rides. Anyone who
+  joins a trip with a Same-gender passenger aboard must match, whatever option they chose.
+- **One password for demo accounts.** They are demo accounts, published on purpose.
+- **Seats.** A Tesla has 1 to 6 passenger seats.
+- **Starting balances.** The seed tops up the passengers through the ledger like any top-up,
+  so every taka has an entry. New sign-ups start at ৳ 0.00.
+- **Top-up limits.** ৳ 1 to ৳ 10,000 at a time, and a balance up to ৳ 100,000.
+- **Fines.** 30 tk for a passenger cancel more than 3 minutes after acceptance, or a no-show
+  after the driver waited 5 minutes. A fine is the only thing that can make a balance
+  negative, and a negative balance blocks new requests.
+- **Late driver cancel.** More than 3 minutes after accepting records a penalty. What a
+  penalty should lead to is left open (FR §13).
+- **Dhaka only.** Places must fall in a box from Uttara to Old Dhaka, and a trip must be at
+  least 100 m.
+- **Nearby means a straight line.** The 2 km search radius is as the crow flies, so the
+  driver's list never waits on the map service.
+- **Where a trip leaves the Tesla.** At the last stop reached, so the next requests are found
+  from there. The driver can still move it by hand between trips.
+- **The Mohakhali quick pick** sits at Wireless Gate, where the road to Gulshan 1 begins, so
+  the story pair pools with no key. **The Airport Road quick pick** sits on Nusrat's road,
+  for a pair that pools with a key.
+- **Stop searching.** After a driver cancel, the request waits again and the passenger is
+  told why. Cancelling a waiting request is free, which serves as "stop searching".
 
 ## Known limitations
 
-See [NFR §11](docs/Dhaka_Tesla_Pool_Non_Functional_Requirements.md#11-known-limitations) for
-the full list. Specific to the current state:
+- **Free hosting sleeps.** The first visit after 15 idle minutes takes about a minute.
+- **Demo passwords are public.** Anyone can sign in as the cast on the live site, so the
+  demo data can be in any state. Moving Bullet back to Banani Road 11 resets the story.
+- **Sessions can't be revoked early.** Signing out clears the cookie, but a copied token
+  works until its 24 hours are up.
+- **The API address is fixed at build time.** Pointing the website at another API means
+  rebuilding it.
+- **Polling, not live updates.** Screens can be up to 4 seconds behind.
+- **No key means approximate distances.** Without `ORS_API_KEY`, every distance is the
+  straight line × 1.3, maps show dashed lines, and the screen says so.
+- **A passenger sees only their own road.** In a pool the Tesla may detour up to 1 km for
+  others, which their map doesn't show (by design, FR-P8).
+- **Bullet glides between stops in a straight line**, not along the road.
+- **Penalties do nothing yet.** They are recorded and counted.
+- **Pretend money.** No real payments and no refunds; a mistaken fine is fixed by hand with
+  a correcting ledger entry.
+- **Map tiles** come from the public OpenStreetMap servers, which suit a demo, not heavy use.
+- **Picking places on the map** needs a mouse or touch; the quick picks work by keyboard.
 
-- Next.js resolves the API proxy address at build time. The web image has to be rebuilt to
-  point at a different API.
-- Signing out clears the cookie, but sessions are stateless. A token copied before
-  sign-out keeps working until its 24 hours are up.
-- Without `ORS_API_KEY`, every distance is straight-line × 1.3, so estimates are
-  approximate. The screen says so.
-- Choosing places on the map needs a mouse or touch. The quick-pick buttons work from the
-  keyboard.
-- Map tiles come from the public OpenStreetMap servers, which suit a demo but not heavy use.
-- drizzle-kit, a dev-only tool, pulls in an old esbuild that `npm audit` flags. It never
-  reaches the Docker images.
-- A driver penalty has no consequence yet. It is recorded and counted, and FR §13 leaves
-  what it should trigger to a later decision.
-- Top-ups are pretend money, and there are no refunds: a fine charged in error is fixed
-  by hand with a correcting ledger entry.
-- While the map service is failing, fallback distances aren't cached. The same 3 requests
-  then ask it again on every refresh, and a fourth waits until it recovers.
-- Maps draw the road from OpenRouteService. Without a key, or while it fails, a leg is a
-  straight dashed line and the legend says so. Bullet still glides between stops in a
-  straight line, not along the road.
-- A passenger sees only their own trip by road. When pooled, the Tesla may detour up to
-  1 km through other riders' stops, which their map doesn't show (FR-P8).
-- With a key, Nusrat's and Rafiq's story rides don't pool: by road, Rafiq's ride would
-  be a 1.15 km detour, over the 1 km limit. They pool with the no-key distances; both
-  results are worked out under [Pooling](#pooling).
-- A passenger's nearby Teslas are up to 4 s old, rounded to about 110 m, and measured in a
-  straight line. A Tesla shows at its last stop, not along the road between stops. The
-  seed has one Tesla, so the demo shows at most one; sign up another driver to see more.
+More in [NFR §11](docs/Dhaka_Tesla_Pool_Non_Functional_Requirements.md#11-known-limitations).
 
-## Still to come
+## Next improvements
 
-- Features implemented, screenshots, API details per phase (phases 1–8)
-- Deployment URL (phase 9)
-- Viral-scale design (HLD)
-- AI Usage
-- Demo video
+- Push updates over WebSockets instead of polling.
+- Live GPS location for the driver, instead of setting it by hand.
+- Decide what driver penalties lead to, such as a pause after several.
+- Password reset and email verification.
+- Ratings for drivers and passengers.
+- A sessions table, so signing out ends a session everywhere at once.
+- Keep the free API awake before demos, or move to an always-on plan.
+- End-to-end browser tests for the main flows.
+
+## If Dhaka Tesla Pool goes viral (bonus)
+
+Say it grows to 1 million passengers and 100,000 drivers. We wouldn't build any of this for
+the MVP, but this is the path we'd follow, one step at a time, only when traffic calls for
+it.
+
+1. **More API servers behind a load balancer.** The API keeps no state of its own: the login
+   is a signed cookie and everything else is in the database. So we can run many copies and
+   put a load balancer in front to spread requests across them. If one copy crashes, the
+   others carry on.
+2. **Split out the busiest parts.** If one area gets far more traffic than the rest, such as
+   the driver request lists and matching, it can move to its own service with its own
+   servers. An API gateway in front keeps a single address for the website and sends each
+   route to the right service. Until then, one API is simpler and easier to change.
+3. **Database replicas.** One main (primary) database takes all writes, and read-only copies
+   (replicas) follow it. This is the "master–slave" setup. Screens that only read, like ride
+   history, earnings and nearby lists, go to the replicas. Anything that changes a seat or
+   money always goes to the primary, so the seat rules stay exact. If the primary fails, a
+   replica is promoted to take its place.
+4. **Sharding.** When one primary can't keep up with writes, split the data by area, for
+   example Gulshan and Banani on one database and Dhanmondi on another. A Tesla, its trips
+   and its bookings all live on the same shard, so a seat claim still touches only one
+   database.
+5. **No single point of failure.** Run at least two of everything (API servers, load
+   balancers, databases) in more than one data centre, with health checks that take a
+   broken copy out automatically. The app already has `/health/ready` for this.
+
+Smaller steps along the way:
+
+- **Caching.** Keep road distances and hot lists in a fast in-memory store like Redis.
+- **Live updates.** Replace 4-second polling with WebSockets, so screens update at once and
+  servers answer far fewer requests.
+- **Geospatial search.** Find nearby Teslas with a geo index (PostGIS or Redis GEO) instead
+  of checking every online Tesla.
+- **Rate limiting.** Limit how often one user or address can call the API.
+- **Monitoring.** Dashboards and alerts for errors, slow requests and database load.
+
+## AI Usage
+
+**Tools:** Claude Code (Anthropic's coding assistant) for the implementation, alongside
+the official documentation for each library.
+
+**Who did what.** I planned the whole system myself before any code was written:
+
+- the Functional Requirements and Non-Functional Requirements
+- what is out of scope
+- the Core Entities
+- the API Routes
+- the High-Level Design (the architecture diagram)
+- the Entity Relationship Diagram
+- the Development Plan with its phases and git flow
+
+These documents are in [`docs/`](docs/). Claude Code then implemented the app phase by
+phase, following those specs and common best practices. For each phase it:
+
+- wrote a Low-Level Design for me to review
+- built the backend
+- built the frontend
+- wrote tests against a real database
+- committed in small, conventional steps
+
+**The frontend is kept simple.** Frontend work is not my strongest area, so AI did most of
+it too. The screens do the job and handle loading, error and empty states, but the design is
+plain.
+
+**Checking the work.** I reviewed each Low-Level Design before it was built, ran the demo
+stories by hand, read the pull requests, and asked for changes where the result didn't match
+what I had in mind. Some of those are below.
+
+### Suggestions I changed or rejected
+
+- **Real road distances instead of a straight-line default.** Claude suggested using the
+  straight-line distance × 1.3 as the default. It's simple, and it needs no key or
+  network. I rejected that. A ride-pooling app is about roads, and a straight line through
+  Dhaka's lakes and dividers says little about a real trip. We use OpenRouteService for
+  real road distances, and the straight line is only a fallback for when the service fails
+  (NFR-13).
+- **Matching by route overlap.** I came up with the rule that a new passenger joins a trip
+  only if their pickup and drop-off lie along the trip's route, with at most 1 km of detour
+  for anyone and a discount for the km they share. That replaced a simpler idea of matching
+  by pickup zone. Two people starting in Banani can be heading in opposite directions, and
+  the overlap rule is what makes the fare fair.
+- **Showing the real route on the map.** The first version of the maps didn't include
+  routes, and the trip was a straight dashed line. I asked for the road to be drawn, because
+  pooling only makes sense when you can see where the trips overlap. That became the road
+  routes feature ([design](docs/lld/route-paths.md)). It also showed that, by road, Rafiq's
+  Gulshan 1 trip is a 1.15 km detour from Nusrat's and doesn't pool, which is why the README
+  has two worked examples.
+
+### Suggestions I accepted
+
+- **Let the database settle seat races.** A seat is claimed with one conditional
+  `UPDATE … WHERE occupied_seats + seats <= capacity`, backed by a CHECK constraint and a
+  version number on each Tesla, instead of locks in the API's memory. It works with any
+  number of API servers, and the race tests prove it.
+- **Move the Mohakhali pin rather than loosen the rule.** At the first Mohakhali point, the
+  story pair didn't pool under the 1 km rule. Rather than stretch the rule to fit the story,
+  the Mohakhali quick pick moved to Wireless Gate, where the road to Gulshan 1 begins.
+- **Money as decimal taka.** Money is stored as `DECIMAL(10,2)` with decimal maths, not
+  whole poysha. The fare multiplies by 1.05 and 1.15, and keeping full precision until one
+  final rounding makes every fare easy to check by hand.
+
+I can explain, debug and change any part of this code: the schema, the state machine, how
+seats are protected, and how the app fails.
+
+## Demo video
+
+_Added at release: a 6-minute walkthrough of the problem, the design and the app._
