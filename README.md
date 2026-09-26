@@ -30,6 +30,7 @@ people than it has seats, and each passenger pays only for their own part of the
 - [Known limitations](#known-limitations)
 - [Next improvements](#next-improvements)
 - [If it goes viral (bonus)](#if-dhaka-tesla-pool-goes-viral-bonus)
+- [AI Usage](#ai-usage)
 - [Demo video](#demo-video)
 
 ## Problem
@@ -840,6 +841,74 @@ Smaller steps along the way:
   of checking every online Tesla.
 - **Rate limiting.** Limit how often one user or address can call the API.
 - **Monitoring.** Dashboards and alerts for errors, slow requests and database load.
+
+## AI Usage
+
+**Tools:** Claude Code (Anthropic's coding assistant) for the implementation, alongside
+the official documentation for each library.
+
+**Who did what.** I planned the whole system myself before any code was written:
+
+- the Functional Requirements and Non-Functional Requirements
+- what is out of scope
+- the Core Entities
+- the API Routes
+- the High-Level Design (the architecture diagram)
+- the Entity Relationship Diagram
+- the Development Plan with its phases and git flow
+
+These documents are in [`docs/`](docs/). Claude Code then implemented the app phase by
+phase, following those specs and common best practices. For each phase it:
+
+- wrote a Low-Level Design for me to review
+- built the backend
+- built the frontend
+- wrote tests against a real database
+- committed in small, conventional steps
+
+**The frontend is kept simple.** Frontend work is not my strongest area, so AI did most of
+it too. The screens do the job and handle loading, error and empty states, but the design is
+plain.
+
+**Checking the work.** I reviewed each Low-Level Design before it was built, ran the demo
+stories by hand, read the pull requests, and asked for changes where the result didn't match
+what I had in mind. Some of those are below.
+
+### Suggestions I changed or rejected
+
+- **Real road distances instead of a straight-line default.** Claude suggested using the
+  straight-line distance × 1.3 as the default. It's simple, and it needs no key or
+  network. I rejected that. A ride-pooling app is about roads, and a straight line through
+  Dhaka's lakes and dividers says little about a real trip. We use OpenRouteService for
+  real road distances, and the straight line is only a fallback for when the service fails
+  (NFR-13).
+- **Matching by route overlap.** I came up with the rule that a new passenger joins a trip
+  only if their pickup and drop-off lie along the trip's route, with at most 1 km of detour
+  for anyone and a discount for the km they share. That replaced a simpler idea of matching
+  by pickup zone. Two people starting in Banani can be heading in opposite directions, and
+  the overlap rule is what makes the fare fair.
+- **Showing the real route on the map.** The first version of the maps didn't include
+  routes, and the trip was a straight dashed line. I asked for the road to be drawn, because
+  pooling only makes sense when you can see where the trips overlap. That became the road
+  routes feature ([design](docs/lld/route-paths.md)). It also showed that, by road, Rafiq's
+  Gulshan 1 trip is a 1.15 km detour from Nusrat's and doesn't pool, which is why the README
+  has two worked examples.
+
+### Suggestions I accepted
+
+- **Let the database settle seat races.** A seat is claimed with one conditional
+  `UPDATE … WHERE occupied_seats + seats <= capacity`, backed by a CHECK constraint and a
+  version number on each Tesla, instead of locks in the API's memory. It works with any
+  number of API servers, and the race tests prove it.
+- **Move the Mohakhali pin rather than loosen the rule.** At the first Mohakhali point, the
+  story pair didn't pool under the 1 km rule. Rather than stretch the rule to fit the story,
+  the Mohakhali quick pick moved to Wireless Gate, where the road to Gulshan 1 begins.
+- **Money as decimal taka.** Money is stored as `DECIMAL(10,2)` with decimal maths, not
+  whole poysha. The fare multiplies by 1.05 and 1.15, and keeping full precision until one
+  final rounding makes every fare easy to check by hand.
+
+I can explain, debug and change any part of this code: the schema, the state machine, how
+seats are protected, and how the app fails.
 
 ## Demo video
 
