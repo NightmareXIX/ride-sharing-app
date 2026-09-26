@@ -323,8 +323,10 @@ through a ledger entry:
 To try a ride: sign in as Jashim and go online. In another browser, sign in as Nusrat,
 choose Banani Road 11 → Mohakhali, get the estimate and request the ride. Within a few
 seconds it appears in Jashim's nearby requests. Accept it, then tap **Arrived at pickup**,
-**start trip** and **complete trip**. Nusrat's screen follows each step and ends with the
-fare to pay in cash and how it was worked out. To see a driver cancel, tap **Cancel ride**
+**start trip** and **complete trip**. On Jashim's map, Bullet glides to the pickup when he
+arrives and to the drop-off when he completes, and arrows show the order of the stops.
+Nusrat's screen follows each step and ends with the fare to pay in cash and how it was
+worked out. To see a driver cancel, tap **Cancel ride**
 before starting: the request goes back to waiting and Nusrat is told why.
 
 To see a pooled ride: with Jashim online at Banani Road 11, have Nusrat request Banani Road
@@ -689,6 +691,12 @@ rarely taps that fast, and a retry succeeds.
 - **Short trips.** Pickup and destination must be at least 100 m apart in a straight line.
 - **Seats.** A request can't ask for more seats than the largest registered Tesla has.
 - **Bullet's start.** The seed parks Bullet at Banani Road 11, where the story begins.
+  After a trip, Bullet stays where the trip ended, so set Jashim's location back to Banani
+  Road 11 before replaying a story.
+- **Where a trip leaves the Tesla.** When a trip ends, its Tesla is left at the last stop
+  reached, or at the pickup where the driver waited for a no-show, so the next requests are
+  found from there. Before any stop is reached, it stays where it was. The driver can still
+  move it by hand between trips (FR-D4).
 - **Two rules arrive early.** One active booking per passenger (FR-C6) and the balance
   checks (FR-W3, FR-W7) were planned for phases 4 and 6. They are enforced from phase 2
   because creating a request depends on them.
@@ -732,9 +740,8 @@ the full list. Specific to the current state:
   by hand with a correcting ledger entry.
 - While the map service is failing, fallback distances aren't cached. The same 3 requests
   then ask it again on every refresh, and a fourth waits until it recovers.
-- A Tesla stays where its trip began until the driver moves it. It isn't moved to the last
-  drop-off when the trip ends.
-- The dashed line on the driver's map joins the stops in order; it isn't the road.
+- The dashed line on the driver's map joins the stops in order, with arrows; it isn't the
+  road. Bullet glides between stops in a straight line.
 
 ## Still to come
 

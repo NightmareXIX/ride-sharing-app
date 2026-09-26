@@ -112,3 +112,10 @@ Work added after the plan was written. Each entry says what changed and why.
 - **Why:** Anyone, including an evaluator, can try the app straight away, without signing up or copying passwords from the README.
 - **How:** The buttons use the normal sign-in, with the demo passwords the README already publishes. Nothing changed on the server.
 - **Branch:** `feature/demo-accounts` (pull request #10)
+
+### Driver map (after phase 8)
+
+- **What:** On the driver's map, Bullet now moves to each stop as the driver reaches it: to the pickup on **Arrived**, and to the drop-off on **complete**. It glides there rather than jumping. The dashed stop-order line has an arrow into each stop. Drop-offs are named after their passengers, stops at the same place share one label, and stops already reached are faded. When a trip ends, the Tesla's saved location becomes where the trip ended.
+- **Why:** Bullet used to stay where the trip began, often hidden under a pickup, and the line had no direction, so the map didn't show where the driver was or where they were going next. After a trip, the Tesla also jumped back to where it began, and its next requests were searched from there.
+- **How:** The web app shows the Tesla at the point the route goes on from, which the trip data already gives. On the server, the transaction that ends a trip also saves its last stop as the Tesla's location. The location never changes mid-trip, so route planning is untouched. FR-D4 still holds: the driver sets the location by hand between trips. Details in `docs/lld/driver-map.md`.
+- **Branch:** `feature/driver-map`
