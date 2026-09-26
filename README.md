@@ -322,12 +322,12 @@ through a ledger entry:
 
 To try a ride: sign in as Jashim and go online. In another browser, sign in as Nusrat,
 choose Banani Road 11 → Mohakhali, get the estimate and request the ride. Within a few
-seconds it appears in Jashim's nearby requests. Accept it, then tap **Arrived at pickup**,
-**start trip** and **complete trip**. On Jashim's map, Bullet glides to the pickup when he
-arrives and to the drop-off when he completes, and arrows show the order of the stops.
-Nusrat's screen follows each step and ends with the fare to pay in cash and how it was
-worked out. To see a driver cancel, tap **Cancel ride**
-before starting: the request goes back to waiting and Nusrat is told why.
+seconds it appears in Jashim's nearby requests. **See destination** marks where it goes on
+his map. Accept it, then tap **Arrived at pickup**, **start trip** and **complete trip**.
+On Jashim's map, Bullet glides to the pickup when he arrives and to the drop-off when he
+completes, and arrows show the order of the stops. Nusrat's screen follows each step and
+ends with the fare to pay in cash and how it was worked out. To see a driver cancel, tap
+**Cancel ride** before starting: the request goes back to waiting and Nusrat is told why.
 
 To see a pooled ride: with Jashim online at Banani Road 11, have Nusrat request Banani Road
 11 → Mohakhali and accept it. Then have Rafiq request Banani Road 11 → Gulshan 1. Jashim
