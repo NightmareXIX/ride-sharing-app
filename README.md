@@ -320,8 +320,9 @@ through a ledger entry:
 | Shirin | ৳ 20.00          | A 30 tk fine takes her below zero, which blocks new requests |
 | Jashim | ৳ 0.00           | Earns from rides                                             |
 
-To try a ride: sign in as Jashim and go online. In another browser, sign in as Nusrat,
-choose Banani Road 11 → Mohakhali, get the estimate and request the ride. Within a few
+To try a ride: sign in as Jashim and go online. In another browser, sign in as Nusrat and
+set the pickup to Banani Road 11: her map shows Bullet among the Teslas within 2 km, for
+looking only. Choose Mohakhali, get the estimate and request the ride. Within a few
 seconds it appears in Jashim's nearby requests. **See destination** marks where it goes on
 his map. Accept it, then tap **Arrived at pickup**, **start trip** and **complete trip**.
 On Jashim's map, Bullet glides to the pickup when he arrives and to the drop-off when he
@@ -474,6 +475,17 @@ History and earnings (phase 8), all under `/api/v1`:
 Lists take `?cursor=…&limit=…` (1–50, default 20). The trip in progress is left out of
 the list and is 404 by id, as is another driver's trip. Shapes and rules are in the
 [phase 8 LLD](docs/lld/phase-8-history.md#3-routes).
+
+Nearby Teslas (added after phase 8), under `/api/v1`:
+
+| Method | Route                        | Who       | Does                                                                            | Errors |
+| ------ | ---------------------------- | --------- | ------------------------------------------------------------------------------- | ------ |
+| GET    | `/nearby-teslas?lat=…&lng=…` | passenger | `{ radiusKm, teslas: [{ lat, lng }] }`: online Teslas with a free seat, rounded | 400    |
+
+Each Tesla is at its latest checkpoint: the pickup it waits at, else the last stop it
+reached, else its saved location. Points are rounded to about 110 m and carry no id or
+name, and a passenger can't choose one. Details are in the
+[nearby Teslas LLD](docs/lld/passenger-nearby-teslas.md).
 
 Every error has the same shape (NFR-35):
 
@@ -656,7 +668,9 @@ rarely taps that fast, and a retry succeeds.
 - Keep the seat claim as a single-row conditional update, and shard by area so a Tesla,
   its trip and its bookings live on one shard and the claim never spans two.
 - Serve the nearby-request list from a read replica or a geo index (Redis GEO) instead of
-  the primary; only the claim needs the primary.
+  the primary; only the claim needs the primary. The same index, updated at each stop,
+  would serve a passenger's nearby Teslas, which today reads every online Tesla with a
+  free seat.
 - Push changes over WebSockets instead of polling every 4 s, so drivers act on fresher
   lists and fewer accepts are out of date.
 - Send idempotency keys with accepts and requests, so retries across dropped connections
@@ -742,6 +756,9 @@ the full list. Specific to the current state:
   then ask it again on every refresh, and a fourth waits until it recovers.
 - The dashed line on the driver's map joins the stops in order, with arrows; it isn't the
   road. Bullet glides between stops in a straight line.
+- A passenger's nearby Teslas are up to 4 s old, rounded to about 110 m, and measured in a
+  straight line. A Tesla shows at its last stop, not along the road between stops. The
+  seed has one Tesla, so the demo shows at most one; sign up another driver to see more.
 
 ## Still to come
 
