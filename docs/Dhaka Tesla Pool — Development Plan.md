@@ -102,6 +102,17 @@ After the feature phases, we cut `pre-release` and finish the project for submis
 - Record the 6-minute video and link it in the README
 - Go through the PRD submission checklist
 
+### Progress
+
+- **`pre-release` cut** from `master` after the road routes merge. Work reaches it through short branches and pull requests, as on `master`. CI now also runs on pushes to `pre-release` and `release/**`.
+- **Deployment config** (`feature/deploy`, pull request #14): a Render Blueprint (`render.yaml`) for the API, and a step-by-step [deployment guide](deployment.md) for Neon, Render and Vercel. The app needed no code changes to deploy.
+- **Integration fixes** (`fix/demo-blurbs`): Rafiq's demo button no longer promises that his Gulshan 1 ride pools, because with a map key it doesn't. The site has an icon, so browsers stop asking for a missing one.
+- **README** (`feature/release-docs`):
+  - Rewritten in the order PRD §12 lists, in plain language.
+  - Adds screenshots, a Mermaid ERD written from the schema, the deployment section, the viral-scale section and AI Usage.
+- **Diagrams.** The architecture diagram needs only a label change: OpenRouteService now also gives road shapes. The ERD is missing the `route_path_cache` table and a few later columns: `seq` on bookings, pools and the ledger, `distance_method` on bookings and route stops, and `route_distance_method` on fares. The drawings are being updated. Until then, the Mermaid ERD in the README is the exact one.
+- **Still to do:** the live URLs in the README, the redrawn diagrams, `release/v1.0.0`, and the video.
+
 ## Changes to the plan
 
 Work added after the plan was written. Each entry says what changed and why.
