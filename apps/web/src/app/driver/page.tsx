@@ -470,8 +470,8 @@ function DriverDashboard({
         />
         {onTrip ? (
           <p className="mt-3 text-sm text-slate-500">
-            Your location stays put while you have a passenger. The dashed line shows the order of
-            your stops, not the road.
+            Your Tesla moves to each stop as you reach it. The arrows show the order of your stops;
+            the dashed line isn’t the road.
           </p>
         ) : (
           <>
