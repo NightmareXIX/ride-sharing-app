@@ -28,7 +28,8 @@ export const DEMO_ACCOUNTS: readonly DemoAccount[] = [
     name: 'Rafiq',
     email: 'rafiq@teslapool.test',
     role: 'passenger',
-    blurb: "Banani → Gulshan 1 with ৳ 500 in TeslaPay. Joins Nusrat's pool.",
+    // Whether Gulshan 1 or Airport Road pools depends on the map key (README, Pooling).
+    blurb: "Heads Nusrat's way from Banani with ৳ 500 in TeslaPay, so he can share her ride.",
   },
   {
     name: 'Shirin',
