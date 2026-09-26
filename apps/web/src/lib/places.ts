@@ -6,6 +6,9 @@ export const QUICK_PICKS: readonly Place[] = [
   // Wireless Gate, where the road to Gulshan 1 begins, so the story's two rides can share.
   { label: 'Mohakhali', lat: 23.7812, lng: 90.409 },
   { label: 'Gulshan 1', lat: 23.7806, lng: 90.4163 },
+  // On Airport Road, on Nusrat's road from Banani Road 11 to Mohakhali, so a second ride
+  // pools with hers when distances come from real roads (README, Pooling, Example 2).
+  { label: 'Airport Road', lat: 23.78102, lng: 90.40028 },
   { label: 'Dhanmondi 27', lat: 23.7561, lng: 90.374 },
   { label: 'Farmgate', lat: 23.7577, lng: 90.3897 },
   { label: 'Mirpur 10', lat: 23.8069, lng: 90.3687 },
