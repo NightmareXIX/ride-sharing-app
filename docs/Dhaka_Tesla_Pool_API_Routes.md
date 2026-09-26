@@ -54,6 +54,7 @@ This document lists every route in the API and what it does. Exact request and r
 
 | Method | Route | What it does |
 |---|---|---|
+| GET | `/nearby-teslas` | Shows the Teslas within 2 km of a pickup that could take a passenger now, as rough anonymous points. For looking only: the passenger can't choose one. |
 | POST | `/fare-estimates` | Shows the estimated fare for a trip before booking. Needs pickup, destination, seats and ride option. Nothing is booked. |
 | POST | `/bookings` | Requests a ride. Needs pickup, destination, seats, ride option and payment method. |
 | GET | `/bookings/current` | Shows the passenger's current ride, or nothing. The app checks this every 4 seconds. |

@@ -119,3 +119,10 @@ Work added after the plan was written. Each entry says what changed and why.
 - **Why:** Bullet used to stay where the trip began, often hidden under a pickup, and the line had no direction, so the map didn't show where the driver was or where they were going next. After a trip, the Tesla also jumped back to where it began, and its next requests were searched from there. A request's destination showed only as a name, so the driver couldn't see on the map where a ride would take them before choosing it.
 - **How:** The web app shows the Tesla at the point the route goes on from, which the trip data already gives. The destination preview uses the destination the request list already sends, which a driver may see before accepting (NFR-9). On the server, the transaction that ends a trip also saves its last stop as the Tesla's location. The location never changes mid-trip, so route planning is untouched. FR-D4 still holds: the driver sets the location by hand between trips. Details in `docs/lld/driver-map.md`.
 - **Branch:** `feature/driver-map`
+
+### Nearby Teslas for passengers (after phase 8)
+
+- **What:** Once a passenger sets a pickup, the request map shows the Teslas within 2 km that could take them, with a count ("1 Tesla within 2 km of your pickup"). It is for looking only: the dots can't be tapped, and the passenger still can't choose a driver.
+- **Why:** A passenger couldn't tell whether any Tesla was near before requesting.
+- **How:** A new passenger route, `GET /nearby-teslas`, lists online Teslas with a free seat, leaving out solo rides. A Tesla on a trip is shown where its route goes on from, the same point the driver's map and the matching rule use, not where the trip began. It uses the drivers' search radius and a straight line, so it never waits on the map service. Points are rounded to about 110 m and sent without names or ids (NFR-9). No table changes. The request form reads it every 4 seconds while a pickup is set. Details in `docs/lld/passenger-nearby-teslas.md`.
+- **Branch:** `feature/nearby-teslas`

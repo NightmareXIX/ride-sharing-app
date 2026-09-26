@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 
-export type { MapMarker, MapTesla, MarkerTone } from './MapPickerClient';
+export type { MapMarker, MapNearby, MapTesla, MarkerTone } from './MapPickerClient';
 
 // Leaflet needs `window`, so the map is only ever rendered in the browser.
 export const MapPicker = dynamic(() => import('./MapPickerClient'), {

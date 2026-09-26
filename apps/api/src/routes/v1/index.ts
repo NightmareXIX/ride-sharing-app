@@ -8,6 +8,7 @@ import { bookingsRouter } from './bookings.js';
 import { driverRouter } from './driver.js';
 import { fareEstimatesRouter } from './fareEstimates.js';
 import { meRouter } from './me.js';
+import { nearbyTeslasRouter } from './nearbyTeslas.js';
 import { walletRouter } from './wallet.js';
 
 export interface V1Deps {
@@ -23,6 +24,7 @@ export function v1Router(deps: V1Deps): Router {
   router.use('/auth', authRouter(deps));
   router.use('/me', meRouter(deps));
   router.use('/driver', driverRouter(deps));
+  router.use('/nearby-teslas', nearbyTeslasRouter(deps));
   router.use('/fare-estimates', fareEstimatesRouter(deps));
   router.use('/bookings', bookingsRouter(deps));
   router.use('/wallet', walletRouter(deps));
