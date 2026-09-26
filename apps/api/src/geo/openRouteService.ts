@@ -52,6 +52,51 @@ export async function drivingMeters(
   return { ok: true, meters };
 }
 
+// The road through the points, in order, and where in it each point is (`wayPoints[i]` is
+// the index in `polyline` of point i). For drawing only (route-paths LLD §2).
+export type PathResult =
+  { ok: true; polyline: string; wayPoints: number[] } | { ok: false; reason: string };
+
+interface PathBody {
+  routes?: Array<{ geometry?: unknown; way_points?: unknown }>;
+}
+
+// Asks OpenRouteService for the road through several points, in one request. Failures
+// come back as reasons, as above.
+export async function drivingPath(
+  config: RoutingConfig,
+  points: readonly LatLng[],
+): Promise<PathResult> {
+  if (!config.apiKey) return { ok: false, reason: 'no_api_key' };
+
+  let body: PathBody;
+  try {
+    const res = await fetch(new URL('/v2/directions/driving-car', config.baseUrl), {
+      method: 'POST',
+      headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ coordinates: points.map((point) => [point.lng, point.lat]) }),
+      signal: AbortSignal.timeout(config.timeoutMs),
+    });
+    if (!res.ok) return { ok: false, reason: `http_${res.status}` };
+    body = (await res.json()) as PathBody;
+  } catch (err) {
+    const timedOut = err instanceof Error && err.name === 'TimeoutError';
+    return { ok: false, reason: timedOut ? 'timeout' : 'network_error' };
+  }
+
+  const route = body.routes?.[0];
+  const polyline = route?.geometry;
+  const wayPoints = route?.way_points;
+  const wellFormed =
+    typeof polyline === 'string' &&
+    polyline.length > 0 &&
+    Array.isArray(wayPoints) &&
+    wayPoints.length === points.length &&
+    wayPoints.every((index) => Number.isInteger(index) && index >= 0);
+  if (!wellFormed) return { ok: false, reason: 'malformed_response' };
+  return { ok: true, polyline, wayPoints: wayPoints as number[] };
+}
+
 // `meters[i][j]` is the drive from point i to point j, or null where ORS found no route.
 export type MatrixResult =
   { ok: true; meters: (number | null)[][] } | { ok: false; reason: string };
