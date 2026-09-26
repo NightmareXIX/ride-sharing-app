@@ -16,6 +16,7 @@ import {
   useMapEvents,
 } from 'react-leaflet';
 import { DHAKA_CENTER, isInServiceArea, roundPoint, SERVICE_AREA, type LatLng } from '@/lib/geo';
+import type { PathLeg } from '@/lib/path';
 
 export type MarkerTone = 'pickup' | 'destination' | 'draft' | 'preview';
 
@@ -41,13 +42,22 @@ export interface MapNearby {
   teslas: LatLng[];
 }
 
+// A road route (route-paths LLD §4). `trip` is the viewer's own: the passenger's trip or
+// the driver's route. `preview` is a request the driver is looking at, drawn over it.
+export interface MapRoute {
+  key: string;
+  tone: 'trip' | 'preview';
+  legs: PathLeg[];
+}
+
 export interface MapPickerProps {
   markers: MapMarker[];
+  routes?: MapRoute[];
   nearby?: MapNearby;
   // The driver's Tesla, drawn above everything else. It glides when its point changes.
   tesla?: MapTesla;
   // Points joined by a dashed line with an arrow into each, e.g. the stops still to come, in
-  // order. The line shows the order only; it isn't the road.
+  // order. The line shows the order only; it isn't the road. Shown until the road arrives.
   path?: LatLng[];
   // Called with a point inside Dhaka when the map is tapped. Leave out for a read-only map.
   onPick?: (point: LatLng) => void;
@@ -64,10 +74,14 @@ const TONE_COLOURS: Record<MarkerTone, string> = {
 };
 
 const PATH_COLOUR = '#0f172a';
+const PREVIEW_COLOUR = TONE_COLOURS.preview;
 const TESLA_COLOUR = '#0f172a';
 
 // Long enough to follow, short enough not to wait for.
 const GLIDE_MS = 700;
+
+// About 30 m in degrees: how far back along a road its last stretch is measured from.
+const LAST_STRETCH = 0.0003;
 
 const DHAKA_BOUNDS = latLngBounds(
   [SERVICE_AREA.minLat, SERVICE_AREA.minLng],
@@ -103,19 +117,54 @@ function arrowIcon(angle: number) {
   });
 }
 
-// One arrow into each stop of the path, so its order reads at a glance.
-function PathArrows({ path }: { path: LatLng[] }) {
-  const key = path.map((p) => `${p.lat},${p.lng}`).join('|');
+interface Arrow {
+  key: string;
+  point: LatLng;
+  // Where the line comes into the point from, which sets the arrow's angle.
+  from: LatLng;
+}
+
+// Stop-order legs: one straight line from each point to the next.
+function straightArrows(path: readonly LatLng[]): Arrow[] {
+  return path.slice(1).flatMap((to, i) => {
+    const from = path[i]!;
+    if (from.lat === to.lat && from.lng === to.lng) return [];
+    return [{ key: `${i}:${to.lat},${to.lng}`, point: to, from }];
+  });
+}
+
+// The point a road comes into its end from. Its last few metres can run any way, since the
+// line is joined to the stop's exact point, so a point a little way back is used.
+function approach(points: readonly LatLng[]): LatLng | undefined {
+  const end = points.at(-1);
+  if (!end) return undefined;
+  for (let i = points.length - 2; i >= 0; i -= 1) {
+    const point = points[i]!;
+    if (Math.hypot(point.lat - end.lat, point.lng - end.lng) >= LAST_STRETCH) return point;
+  }
+  return points.find((point) => point.lat !== end.lat || point.lng !== end.lng);
+}
+
+function toLatLngs(leg: PathLeg): LatLng[] {
+  return leg.points.map(([lat, lng]) => ({ lat, lng }));
+}
+
+// Road legs: each arrow is turned to the last stretch of road into its stop.
+function roadArrows(legs: readonly PathLeg[]): Arrow[] {
+  return legs.flatMap((leg, i) => {
+    const points = toLatLngs(leg);
+    const to = points.at(-1);
+    const from = approach(points);
+    return to && from ? [{ key: `${i}:${to.lat},${to.lng}`, point: to, from }] : [];
+  });
+}
+
+// One arrow into each stop, so the route's order reads at a glance.
+function Arrows({ arrows: given }: { arrows: Arrow[] }) {
+  const key = given.map((a) => `${a.key}<${a.from.lat},${a.from.lng}`).join('|');
   const arrows = useMemo(
-    () =>
-      path.slice(1).flatMap((to, i) => {
-        const from = path[i]!;
-        if (from.lat === to.lat && from.lng === to.lng) return [];
-        return [
-          { key: `${i}:${to.lat},${to.lng}`, point: to, icon: arrowIcon(screenAngle(from, to)) },
-        ];
-      }),
-    // Re-made only when the path's points change.
+    () => given.map((a) => ({ ...a, icon: arrowIcon(screenAngle(a.from, a.point)) })),
+    // Re-made only when the arrows' points change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [key],
   );
@@ -128,6 +177,72 @@ function PathArrows({ path }: { path: LatLng[] }) {
       keyboard={false}
     />
   ));
+}
+
+// Road routes, below the stops and the Tesla and above the nearby Teslas. The viewer's own
+// route is a dark line on a white casing. A preview is a thinner violet line on top, so a
+// road the two share reads as violet inside dark, and a stretch where it leaves the route
+// shows on its own. Fallback legs are thin straight dashes, like the stop-order line.
+function RouteLayer({ routes }: { routes: MapRoute[] }) {
+  // Own routes first, so a preview is drawn over them.
+  const ordered = [...routes].sort((a, b) => (a.tone === b.tone ? 0 : a.tone === 'trip' ? -1 : 1));
+  return (
+    <Pane name="routes" style={{ zIndex: 380 }}>
+      {ordered.flatMap((route) =>
+        route.legs.flatMap((leg, i) => {
+          const key = `${route.key}:${i}`;
+          const positions = toLatLngs(leg);
+          const colour = route.tone === 'trip' ? PATH_COLOUR : PREVIEW_COLOUR;
+          if (leg.method === 'fallback') {
+            return [
+              <Polyline
+                key={key}
+                positions={positions}
+                interactive={false}
+                pathOptions={{ color: colour, weight: 3, opacity: 0.7, dashArray: '6 8' }}
+              />,
+            ];
+          }
+          if (route.tone === 'preview') {
+            return [
+              <Polyline
+                key={key}
+                positions={positions}
+                interactive={false}
+                pathOptions={{ color: colour, weight: 3.5, opacity: 0.95, lineJoin: 'round' }}
+              />,
+            ];
+          }
+          return [
+            <Polyline
+              key={`${key}:casing`}
+              positions={positions}
+              interactive={false}
+              pathOptions={{ color: '#ffffff', weight: 10, opacity: 0.9, lineJoin: 'round' }}
+            />,
+            <Polyline
+              key={key}
+              positions={positions}
+              interactive={false}
+              pathOptions={{ color: colour, weight: 6, opacity: 0.8, lineJoin: 'round' }}
+            />,
+          ];
+        }),
+      )}
+    </Pane>
+  );
+}
+
+// The corners of the box around the routes, so the map can keep all of them in view.
+function routeCorners(routes: readonly MapRoute[]): LatLng[] {
+  const points = routes.flatMap((route) => route.legs.flatMap((leg) => leg.points));
+  if (points.length === 0) return [];
+  const lats = points.map(([lat]) => lat);
+  const lngs = points.map(([, lng]) => lng);
+  return [
+    { lat: Math.min(...lats), lng: Math.min(...lngs) },
+    { lat: Math.max(...lats), lng: Math.max(...lngs) },
+  ];
 }
 
 function easeInOut(t: number): number {
@@ -228,6 +343,7 @@ function FollowPoints({ points }: { points: LatLng[] }) {
 // An OpenStreetMap map of Dhaka with the required credit (NFR-24).
 export default function MapPickerClient({
   markers,
+  routes = [],
   nearby,
   tesla,
   path,
@@ -236,6 +352,10 @@ export default function MapPickerClient({
 }: MapPickerProps) {
   const points = [...(tesla ? [tesla.point] : []), ...markers.map((m) => m.point)];
   const first = points[0] ?? DHAKA_CENTER;
+  // A road can bulge past its stops, so the whole road is kept in view too.
+  const inView = [...points, ...routeCorners(routes)];
+  // The driver's route has an arrow into each stop, as the stop-order line does.
+  const trip = tesla ? routes.find((route) => route.tone === 'trip') : undefined;
   return (
     <div
       role="region"
@@ -256,15 +376,17 @@ export default function MapPickerClient({
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         {nearby && <NearbyLayer {...nearby} />}
+        {routes.length > 0 && <RouteLayer routes={routes} />}
         {path && path.length > 1 && (
           <>
             <Polyline
               positions={path}
               pathOptions={{ color: PATH_COLOUR, weight: 3, opacity: 0.6, dashArray: '6 8' }}
             />
-            <PathArrows path={path} />
+            <Arrows arrows={straightArrows(path)} />
           </>
         )}
+        {trip && <Arrows arrows={roadArrows(trip.legs)} />}
         {markers.map((marker) => (
           <CircleMarker
             // A tooltip can't stop being permanent, so fading draws the marker afresh.
@@ -284,7 +406,7 @@ export default function MapPickerClient({
           </CircleMarker>
         ))}
         {tesla && <MovingTesla point={tesla.point} label={tesla.label} />}
-        <FollowPoints points={points} />
+        <FollowPoints points={inView} />
         {onPick && <PickOnTap onPick={onPick} />}
       </MapContainer>
     </div>
