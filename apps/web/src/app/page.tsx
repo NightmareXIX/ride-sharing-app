@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { DemoAccounts } from '@/components/DemoAccounts';
 import { RedirectIfSignedIn } from '@/components/RedirectIfSignedIn';
 import { Wordmark } from '@/components/Wordmark';
 
@@ -31,6 +32,18 @@ export default function HomePage() {
             Sign in
           </Link>
         </div>
+        <section
+          aria-labelledby="demo-heading"
+          className="space-y-3 border-t border-slate-200 pt-6"
+        >
+          <div>
+            <h2 id="demo-heading" className="text-lg font-semibold tracking-tight">
+              Try the demo
+            </h2>
+            <p className="text-slate-600">Sign in as one of the story cast, no sign-up needed.</p>
+          </div>
+          <DemoAccounts />
+        </section>
       </div>
     </main>
   );

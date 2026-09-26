@@ -101,3 +101,14 @@ After the feature phases, we cut `pre-release` and finish the project for submis
 - Cut `release/v1.0.0` from `pre-release`
 - Record the 6-minute video and link it in the README
 - Go through the PRD submission checklist
+
+## Changes to the plan
+
+Work added after the plan was written. Each entry says what changed and why.
+
+### Demo accounts (after phase 8)
+
+- **What:** The home page now has a **Try the demo** section with one button for each seeded account: Jashim the driver, and the passengers Nusrat, Rafiq and Shirin. Tapping a button signs you in as that person. The sign-in page shows the same buttons under the form.
+- **Why:** Anyone, including an evaluator, can try the app straight away, without signing up or copying passwords from the README.
+- **How:** The buttons use the normal sign-in, with the demo passwords the README already publishes. Nothing changed on the server.
+- **Branch:** `feature/demo-accounts` (pull request #10)

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 import { AuthShell } from '@/components/AuthShell';
+import { DemoAccounts } from '@/components/DemoAccounts';
 import { RedirectIfSignedIn } from '@/components/RedirectIfSignedIn';
 import { FormAlert, SubmitButton, TextField } from '@/components/forms';
 import { homePath, type Account } from '@/lib/account';
@@ -69,6 +70,12 @@ export default function LoginPage() {
         />
         <SubmitButton pending={pending}>{pending ? 'Signing in…' : 'Sign in'}</SubmitButton>
       </form>
+      <div className="my-6 flex items-center gap-3 text-sm text-slate-500">
+        <span aria-hidden className="h-px flex-1 bg-slate-200" />
+        or try a demo account
+        <span aria-hidden className="h-px flex-1 bg-slate-200" />
+      </div>
+      <DemoAccounts compact />
     </AuthShell>
   );
 }
