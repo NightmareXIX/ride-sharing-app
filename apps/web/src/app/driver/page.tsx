@@ -17,7 +17,15 @@ import { api, ApiError } from '@/lib/api';
 import type { LatLng } from '@/lib/geo';
 import { formatTaka } from '@/lib/money';
 import { describePoint } from '@/lib/places';
-import type { CompletedTrip, DriverTrip, NearbyRequest, TripBooking } from '@/lib/trip';
+import {
+  describeSpot,
+  groupStops,
+  teslaSpot,
+  type CompletedTrip,
+  type DriverTrip,
+  type NearbyRequest,
+  type TripBooking,
+} from '@/lib/trip';
 import { useAccount } from '@/lib/useAccount';
 import { usePolling } from '@/lib/usePolling';
 import type { DriverVehicle } from '@/lib/vehicle';
@@ -58,6 +66,8 @@ function DriverDashboard({
   const [draft, setDraft] = useState<LatLng | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
   const [accepting, setAccepting] = useState<string | null>(null);
+  // The request whose destination is on the map (driver-map LLD §4).
+  const [previewing, setPreviewing] = useState<string | null>(null);
   // The passenger whose trip action is running.
   const [stepping, setStepping] = useState<string | null>(null);
   const [completed, setCompleted] = useState<CompletedRide | null>(null);
@@ -146,6 +156,24 @@ function DriverDashboard({
     }
   }, trip !== null);
 
+  // When a trip ends, the API leaves the Tesla where it ended (driver-map LLD §3). It stays
+  // where the map last showed it, rather than jumping back, until the Tesla is read again.
+  const lastStop = useRef<LatLng | null>(null);
+  useEffect(() => {
+    if (trip) {
+      lastStop.current = teslaSpot(null, trip)?.point ?? null;
+      return;
+    }
+    const endedAt = lastStop.current;
+    if (!endedAt) return;
+    lastStop.current = null;
+    setVehicle((shown) => (shown ? { ...shown, location: endedAt } : shown));
+    api<{ vehicle: DriverVehicle }>('/driver/vehicle').then(
+      (body) => setVehicle(body.vehicle),
+      () => {},
+    );
+  }, [trip]);
+
   // One action at a time; its buttons stay disabled until it finishes (NFR-37).
   async function run(kind: Exclude<Busy, null>, call: () => Promise<{ vehicle: DriverVehicle }>) {
     setBusy(kind);
@@ -178,6 +206,7 @@ function DriverDashboard({
   // Everything is checked again on the server; the list may be a few seconds old.
   async function accept(request: NearbyRequest) {
     setAccepting(request.id);
+    setPreviewing(null);
     setAlert('');
     setNotice('');
     try {
@@ -290,40 +319,46 @@ function DriverDashboard({
   // A driver with a passenger stays online and in place (FR-D3).
   const onTrip = trip !== null;
 
+  // Where the driver is: the stop reached, or the saved location (driver-map LLD §2).
+  const spot = teslaSpot(vehicle.location, trip);
+  const tesla = spot ? { point: spot.point, label: vehicle.name } : undefined;
   const markers: MapMarker[] = [];
-  if (vehicle.location) {
-    markers.push({ key: 'tesla', point: vehicle.location, label: vehicle.name, tone: 'driver' });
-  }
   if (draft) markers.push({ key: 'draft', point: draft, label: 'New location', tone: 'draft' });
-  for (const booking of trip?.bookings ?? []) {
+  // Every stop of the trip, named after its passengers. Those already reached are faded.
+  for (const group of groupStops(trip?.stops ?? [])) {
+    const pickup = group.type === 'pickup';
     markers.push({
-      key: `pickup-${booking.id}`,
-      point: booking.pickup,
-      label: `Pickup: ${booking.passenger.name}`,
-      tone: 'pickup',
-    });
-    markers.push({
-      key: `destination-${booking.id}`,
-      point: booking.destination,
-      label: booking.destination.label,
-      tone: 'destination',
+      key: `stop-${group.key}`,
+      point: group.point,
+      label: `${pickup ? 'Pickup' : 'Drop-off'}: ${group.names.join(' & ')}`,
+      tone: pickup ? 'pickup' : 'destination',
+      faded: group.reached,
     });
   }
-  // The stops still to come, in order, from where the route goes on.
-  const stops = trip?.stops ?? [];
-  const lastReached = stops.filter((stop) => stop.actualOdometerKm !== null).at(-1);
-  const routeStart = lastReached?.place ?? vehicle.location;
-  const ahead = stops.filter((stop) => stop.actualOdometerKm === null).map((stop) => stop.place);
-  const routePath = routeStart && ahead.length > 0 ? [routeStart, ...ahead] : undefined;
+  // The stops still to come, in order, from the Tesla. A pickup it waits at isn't ahead.
+  const ahead = (trip?.stops ?? [])
+    .filter((stop) => stop.actualOdometerKm === null && stop !== spot?.stop)
+    .map((stop) => stop.place);
+  const routePath = spot && ahead.length > 0 ? [spot.point, ...ahead] : undefined;
 
   if (searching) {
     for (const request of requests ?? []) {
+      // Shown only while the request is listed, so a taken one leaves the map with it.
+      const shown = request.id === previewing;
       markers.push({
         key: `request-${request.id}`,
         point: request.pickup,
-        label: request.pickup.label,
+        label: shown ? 'Pickup (preview)' : request.pickup.label,
         tone: 'pickup',
       });
+      if (shown) {
+        markers.push({
+          key: `preview-${request.id}`,
+          point: request.destination,
+          label: `Drop-off: ${request.destination.label}`,
+          tone: 'preview',
+        });
+      }
     }
   }
 
@@ -359,6 +394,8 @@ function DriverDashboard({
           freeSeats={seatsFree}
           accepting={accepting}
           onAccept={accept}
+          previewing={previewing}
+          onPreview={setPreviewing}
         />
       )}
       {vehicle.isOnline && seatsFree === 0 && (
@@ -428,20 +465,25 @@ function DriverDashboard({
 
       <Card label="Your location">
         <p className="mb-3 text-slate-900">
-          {vehicle.location ? describePoint(vehicle.location) : 'Not set yet'}
+          {spot?.stop
+            ? describeSpot(spot.stop)
+            : vehicle.location
+              ? describePoint(vehicle.location)
+              : 'Not set yet'}
         </p>
         <MapPicker
           label={
             onTrip ? 'Map of your current ride.' : 'Map of Dhaka. Tap to choose your location.'
           }
           markers={markers}
+          tesla={tesla}
           path={routePath}
           onPick={busy === null && !onTrip ? setDraft : undefined}
         />
         {onTrip ? (
           <p className="mt-3 text-sm text-slate-500">
-            Your location stays put while you have a passenger. The dashed line shows the order of
-            your stops, not the road.
+            Your Tesla moves to each stop as you reach it. The arrows show the order of your stops;
+            the dashed line isn’t the road.
           </p>
         ) : (
           <>

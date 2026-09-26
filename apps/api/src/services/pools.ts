@@ -1,5 +1,16 @@
 import Big from 'big.js';
-import { and, asc, desc, eq, inArray, isNull, notExists, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  notExists,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import type { PgUpdateSetSource } from 'drizzle-orm/pg-core';
 import type { Database, Transaction } from '../db/client.js';
 import {
@@ -554,15 +565,49 @@ export async function releaseSeats(
 
 // Ends the trip once none of its bookings is still with the driver (FR-R7). Runs in the
 // transaction that made the last one final, or handed it back.
-export async function finishPoolIfDone(tx: Transaction, poolId: string): Promise<void> {
+//
+// The Tesla is then left where the trip ended, so its next requests are found from there:
+// `waitedAt` when the driver was waiting at a pickup (a no-show), else the last stop
+// reached. Before any stop is reached it stays where it was (driver-map LLD §3).
+export async function finishPoolIfDone(
+  tx: Transaction,
+  poolId: string,
+  waitedAt?: LatLng,
+): Promise<void> {
   const stillAboard = tx
     .select({ id: bookings.id })
     .from(bookings)
     .where(and(eq(bookings.poolId, poolId), inArray(bookings.status, ASSIGNED_STATUSES)));
-  await tx
+  const [finished] = await tx
     .update(pools)
     .set({ status: 'finished', finishedAt: sql`now()` })
-    .where(and(eq(pools.id, poolId), eq(pools.status, 'active'), notExists(stillAboard)));
+    .where(and(eq(pools.id, poolId), eq(pools.status, 'active'), notExists(stillAboard)))
+    .returning({ vehicleId: pools.vehicleId });
+  if (!finished) return;
+
+  let endedAt = waitedAt;
+  if (!endedAt) {
+    // The driver follows the stops in order, so the highest reached is the latest.
+    const [lastReached] = await tx
+      .select({ lat: routeStops.lat, lng: routeStops.lng })
+      .from(routeStops)
+      .where(and(eq(routeStops.poolId, poolId), isNotNull(routeStops.reachedAt)))
+      .orderBy(desc(routeStops.sequence))
+      .limit(1);
+    endedAt = lastReached;
+  }
+  if (!endedAt) return;
+
+  // Like every write to a Tesla, this bumps its version (FR-C3).
+  await tx
+    .update(vehicles)
+    .set({
+      currentLat: endedAt.lat,
+      currentLng: endedAt.lng,
+      version: sql`${vehicles.version} + 1`,
+      updatedAt: sql`now()`,
+    })
+    .where(eq(vehicles.id, finished.vehicleId));
 }
 
 // Every driver action locks the Tesla first, then the booking (FR-C7). Work planned from
@@ -1019,6 +1064,8 @@ export async function markNoShow(
         .select({
           status: bookings.status,
           passengerId: bookings.passengerId,
+          pickupLat: bookings.pickupLat,
+          pickupLng: bookings.pickupLng,
           waited: sql<boolean>`coalesce(now() >= ${bookings.arrivedAt} + ${noShowWait}, false)`,
         })
         .from(bookings)
@@ -1046,7 +1093,11 @@ export async function markNoShow(
         if (!outcome.poolId || !unreached) throw new StaleRoute();
         await releaseSeats(tx, vehicleId, outcome.seats);
         await writePlan(tx, outcome.poolId, unreached);
-        await finishPoolIfDone(tx, outcome.poolId);
+        // The driver waited at the pickup, so a trip that ends here leaves them there.
+        await finishPoolIfDone(tx, outcome.poolId, {
+          lat: booking.pickupLat,
+          lng: booking.pickupLng,
+        });
         await postEntry(tx, {
           userId: booking.passengerId,
           type: 'fine',
