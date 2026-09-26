@@ -328,12 +328,31 @@ function NearbyLayer({ center, radiusKm, teslas }: MapNearby) {
 function FollowPoints({ points }: { points: LatLng[] }) {
   const map = useMap();
   const key = points.map((p) => `${p.lat},${p.lng}`).join('|');
+  // Leaflet drops a view change asked for while a zoom animates, e.g. a road arriving just
+  // after the stops it joins. Such a change waits for the zoom to end instead.
+  const zooming = useRef(false);
+  const waiting = useRef<(() => void) | null>(null);
+  useMapEvents({
+    zoomanim() {
+      zooming.current = true;
+    },
+    zoomend() {
+      zooming.current = false;
+      const fit = waiting.current;
+      waiting.current = null;
+      fit?.();
+    },
+  });
   useEffect(() => {
-    if (points.length === 1) {
-      map.panTo(points[0]!);
-    } else if (points.length > 1) {
-      map.fitBounds(latLngBounds(points), { padding: [40, 40], maxZoom: 15 });
-    }
+    const fit = () => {
+      if (points.length === 1) {
+        map.panTo(points[0]!);
+      } else if (points.length > 1) {
+        map.fitBounds(latLngBounds(points), { padding: [40, 40], maxZoom: 15 });
+      }
+    };
+    if (zooming.current) waiting.current = fit;
+    else fit();
     // Re-run only when the set of points changes, not on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, key]);
