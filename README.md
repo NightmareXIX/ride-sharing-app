@@ -29,6 +29,7 @@ people than it has seats, and each passenger pays only for their own part of the
 - [Assumptions](#assumptions)
 - [Known limitations](#known-limitations)
 - [Next improvements](#next-improvements)
+- [If it goes viral (bonus)](#if-dhaka-tesla-pool-goes-viral-bonus)
 - [Demo video](#demo-video)
 
 ## Problem
@@ -802,6 +803,43 @@ More in [NFR §11](docs/Dhaka_Tesla_Pool_Non_Functional_Requirements.md#11-known
 - A sessions table, so signing out ends a session everywhere at once.
 - Keep the free API awake before demos, or move to an always-on plan.
 - End-to-end browser tests for the main flows.
+
+## If Dhaka Tesla Pool goes viral (bonus)
+
+Say it grows to 1 million passengers and 100,000 drivers. We wouldn't build any of this for
+the MVP, but this is the path we'd follow, one step at a time, only when traffic calls for
+it.
+
+1. **More API servers behind a load balancer.** The API keeps no state of its own: the login
+   is a signed cookie and everything else is in the database. So we can run many copies and
+   put a load balancer in front to spread requests across them. If one copy crashes, the
+   others carry on.
+2. **Split out the busiest parts.** If one area gets far more traffic than the rest, such as
+   the driver request lists and matching, it can move to its own service with its own
+   servers. An API gateway in front keeps a single address for the website and sends each
+   route to the right service. Until then, one API is simpler and easier to change.
+3. **Database replicas.** One main (primary) database takes all writes, and read-only copies
+   (replicas) follow it. This is the "master–slave" setup. Screens that only read, like ride
+   history, earnings and nearby lists, go to the replicas. Anything that changes a seat or
+   money always goes to the primary, so the seat rules stay exact. If the primary fails, a
+   replica is promoted to take its place.
+4. **Sharding.** When one primary can't keep up with writes, split the data by area, for
+   example Gulshan and Banani on one database and Dhanmondi on another. A Tesla, its trips
+   and its bookings all live on the same shard, so a seat claim still touches only one
+   database.
+5. **No single point of failure.** Run at least two of everything (API servers, load
+   balancers, databases) in more than one data centre, with health checks that take a
+   broken copy out automatically. The app already has `/health/ready` for this.
+
+Smaller steps along the way:
+
+- **Caching.** Keep road distances and hot lists in a fast in-memory store like Redis.
+- **Live updates.** Replace 4-second polling with WebSockets, so screens update at once and
+  servers answer far fewer requests.
+- **Geospatial search.** Find nearby Teslas with a geo index (PostGIS or Redis GEO) instead
+  of checking every online Tesla.
+- **Rate limiting.** Limit how often one user or address can call the API.
+- **Monitoring.** Dashboards and alerts for errors, slow requests and database load.
 
 ## Demo video
 
