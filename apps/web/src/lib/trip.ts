@@ -1,6 +1,6 @@
 import type { BookingStatus, PaymentMethod, RideOption } from './booking';
 import type { FareBreakdown } from './fare';
-import type { Place } from './geo';
+import type { LatLng, Place } from './geo';
 
 // A ride request as a driver sees it before accepting: where and what, never who.
 export interface NearbyRequest {
@@ -76,6 +76,34 @@ export interface DriverTrip {
   odometerKm: string;
   stops: TripStop[];
   bookings: TripBooking[];
+}
+
+// Where the Tesla is on the driver's map: the point its route goes on from, as the API plans
+// it (driver-map LLD §2). `stop` is the stop it is at; null at its saved location.
+export interface TeslaSpot {
+  point: LatLng;
+  stop: TripStop | null;
+}
+
+// The pickup the driver has arrived at, else the last stop reached, else the saved location,
+// which is where the trip began. Stops come in route order.
+export function teslaSpot(saved: LatLng | null, trip: DriverTrip | null): TeslaSpot | null {
+  const stops = trip?.stops ?? [];
+  const next = stops.find((stop) => stop.actualOdometerKm === null);
+  const waitingAt =
+    next?.type === 'pickup' &&
+    trip?.bookings.some((b) => b.id === next.bookingId && b.status === 'DRIVER_ARRIVED')
+      ? next
+      : undefined;
+  const at = waitingAt ?? stops.filter((stop) => stop.actualOdometerKm !== null).at(-1);
+  if (at) return { point: at.place, stop: at };
+  return saved ? { point: saved, stop: null } : null;
+}
+
+// "At Rafiq's pickup · Banani Road 11"
+export function describeSpot(stop: TripStop): string {
+  const kind = stop.type === 'pickup' ? 'pickup' : 'drop-off';
+  return `At ${stop.passenger.name}'s ${kind} · ${stop.place.label}`;
 }
 
 export interface CompletedTrip {
