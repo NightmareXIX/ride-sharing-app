@@ -91,7 +91,7 @@ A leg is sent as:
 
 **The estimate.** The path is looked up alongside the distance (`Promise.all`), so a new pair costs one directions request more, in parallel. A failed path never fails the estimate: it comes back as a straight fallback line.
 
-**The driver's route** starts at the route's anchor, the point it goes on from (`progressOf` in `services/routes.ts`), followed by the pinned pickup, if the driver is waiting at one, and then the pending stops. That anchor is the point the matching rule plans from and the web app puts the Tesla at (driver-map LLD §2), so the line starts under the Tesla. With the pickup pinned, the first leg has no line, since the Tesla is already there.
+**The driver's route** starts at the route's anchor, the point it goes on from (`progressOf` in `services/routes.ts`), and goes through every stop not yet reached. That anchor is the point the matching rule plans from and the web app puts the Tesla at (driver-map LLD §2), so the line starts under the Tesla. A pickup the driver is waiting at is where the Tesla stands, so no leg leads to it. Neither does a stop at the same place as the one before it: that leg has no line.
 
 ### Code
 
@@ -122,7 +122,7 @@ apps/api/
 - Routes lie under the stop dots and the Tesla, and above the nearby-Teslas layer.
 - Each arrowhead into a stop is turned to the last stretch of road into it, not to a straight line.
 - Until a route arrives, or if it fails, the map shows the dashed stop-order line as before.
-- The map refits to include the road, since a road can bulge past the stops. It refits only when the route changes.
+- The map refits to include the road, since a road can bulge past the stops. It refits only when the route changes. Leaflet drops a view change asked for while a zoom animates, which is what happens when a road arrives just after the stops it joins. A refit that comes mid-zoom therefore waits for the zoom to end.
 
 ### Legend
 
@@ -158,6 +158,8 @@ How the matching rule (FR-L3, `domain/matching.ts`) already treats requests a li
 | Driver drives another way | Not modelled: a stop's reading is its planned km (FR-L5), so it never changes a fare. The drawn road is the plan, not a track. |
 
 **On the map.** The preview is the request's own trip. For a pickup 300 m off the route, the violet line starts beside the dark one, and the loop the driver would drive isn't drawn. The legend gives the added km. Once accepted, the driver's route is read again and shows the detour through the new stops.
+
+**Nusrat and Rafiq with real roads.** Checked with a real key while building this. Bullet waits at Banani Road 11 with Nusrat accepted (Banani → Mohakhali, 3.335 km by road). Rafiq's Banani → Gulshan 1 is 3.061 km direct, and Mohakhali → Gulshan 1 is 0.876 km, because the road passes Wireless Gate and turns back at a divider. Dropping Nusrat first gives Rafiq 3.335 + 0.876 = 4.211 km, a 1.15 km detour, over the 1 km allowance of (c). Dropping Rafiq first stretches Nusrat's ride by 1.7 km. So with a key, Rafiq isn't listed. The pair pools only with the straight-line fallback, where the detour is 0.518 km (README, Pooling). The map now shows why: Jashim's road runs west to Airport Road, south along it, and on past Wireless Gate before turning back at the divider. Moving a story pin (FR §13) would change the demo data, so it is left as a decision to make. A request whose drop-off lies on Jashim's road, for example on Airport Road, is listed at +0.001 km, and its trip draws on top of his route.
 
 **Known gaps, left as they are:**
 

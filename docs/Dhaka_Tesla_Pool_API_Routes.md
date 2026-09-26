@@ -55,11 +55,12 @@ This document lists every route in the API and what it does. Exact request and r
 | Method | Route | What it does |
 |---|---|---|
 | GET | `/nearby-teslas` | Shows the Teslas within 2 km of a pickup that could take a passenger now, as rough anonymous points. For looking only: the passenger can't choose one. |
-| POST | `/fare-estimates` | Shows the estimated fare for a trip before booking. Needs pickup, destination, seats and ride option. Nothing is booked. |
+| POST | `/fare-estimates` | Shows the estimated fare for a trip before booking, with the trip's road to draw on the map. Needs pickup, destination, seats and ride option. Nothing is booked. |
 | POST | `/bookings` | Requests a ride. Needs pickup, destination, seats, ride option and payment method. |
 | GET | `/bookings/current` | Shows the passenger's current ride, or nothing. The app checks this every 4 seconds. |
 | GET | `/bookings` | Lists the passenger's past rides. |
 | GET | `/bookings/:id` | Shows one ride: its status, driver and Tesla, and the fare breakdown once finished. Never shows other passengers. |
+| GET | `/bookings/:id/path` | The ride's own road, pickup to destination, to draw on the map. Never the shared trip's route. |
 | POST | `/bookings/:id/cancel` | Cancels the ride. Free before a driver accepts and for 3 minutes after. After that, a 30 tk fine. Not allowed once the ride has started. |
 
 **A ride request is refused when:**
@@ -87,6 +88,7 @@ This document lists every route in the API and what it does. Exact request and r
 | Method | Route | What it does |
 |---|---|---|
 | GET | `/driver/requests` | Lists ride requests the driver can accept. The app checks this every 4 seconds. |
+| GET | `/driver/requests/:bookingId/path` | An open request's road, pickup to destination, so the driver can see it over their route before choosing. |
 | POST | `/driver/requests/:bookingId/accept` | Accepts a ride request. Checks everything again before accepting, since things may have changed. |
 
 **Which requests a driver sees:**
@@ -120,6 +122,7 @@ This document lists every route in the API and what it does. Exact request and r
 | Method | Route | What it does |
 |---|---|---|
 | GET | `/driver/pool` | Shows the current trip: every passenger, their seats and status, and the list of stops in order with the next stop marked. The app checks this every 4 seconds. |
+| GET | `/driver/pool/path` | The trip's road still to come, from the Tesla through each stop not yet reached. Read when the stops change, not every 4 seconds. |
 | POST | `/driver/bookings/:id/arrive` | Marks that the driver has arrived at this passenger's pickup. |
 | POST | `/driver/bookings/:id/start` | Marks that the passenger is in the Tesla. |
 | POST | `/driver/bookings/:id/complete` | Marks that the passenger has been dropped off. Calculates the final fare and handles payment. |

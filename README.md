@@ -69,8 +69,8 @@ The specs are the source of truth for every phase:
 The ERD shows the target schema. The database grows one migration per phase, so today it
 holds `users`, `wallets`, `wallet_transactions`, `vehicles` (with online status,
 location and seats), `pools`, `bookings` (with their lifecycle times),
-`booking_status_history`, `route_stops`, `fares`, `driver_penalties` and
-`distance_cache`.
+`booking_status_history`, `route_stops`, `fares`, `driver_penalties`, `distance_cache`
+and `route_path_cache`.
 
 The browser talks only to the Next.js site. The site proxies `/api/v1/*` to the Express
 API, so the login cookie is first-party even though the two run on different hosts.
@@ -323,8 +323,8 @@ through a ledger entry:
 To try a ride: sign in as Jashim and go online. In another browser, sign in as Nusrat and
 set the pickup to Banani Road 11: her map shows Bullet among the Teslas within 2 km, for
 looking only. Choose Mohakhali, get the estimate and request the ride. Within a few
-seconds it appears in Jashim's nearby requests. **See destination** marks where it goes on
-his map. Accept it, then tap **Arrived at pickup**, **start trip** and **complete trip**.
+seconds it appears in Jashim's nearby requests. **See route** draws her trip by road on his
+map. Accept it, and his route by road runs from Bullet through the stops. Then then tap **Arrived at pickup**, **start trip** and **complete trip**.
 On Jashim's map, Bullet glides to the pickup when he arrives and to the drop-off when he
 completes, and arrows show the order of the stops. Nusrat's screen follows each step and
 ends with the fare to pay in cash and how it was worked out. To see a driver cancel, tap
@@ -332,7 +332,10 @@ ends with the fare to pay in cash and how it was worked out. To see a driver can
 
 To see a pooled ride: with Jashim online at Banani Road 11, have Nusrat request Banani Road
 11 → Mohakhali and accept it. Then have Rafiq request Banani Road 11 → Gulshan 1. Jashim
-sees it under **Requests on your route**, adding 0.970 km. Accept it: the route lists
+sees it under **Requests on your route**, adding 0.970 km. This uses the no-key distances:
+with an OpenRouteService key, Rafiq's ride is a 1.15 km detour by road, over the 1 km
+limit, so it isn't listed (see the [route-paths LLD](docs/lld/route-paths.md#5-small-deviations-from-the-route)).
+Accept it: the route lists
 Nusrat's pickup, Rafiq's pickup, Nusrat's drop-off, then Rafiq's, and only the next stop
 has a button. Take the steps in order. With no map key, Nusrat pays ৳ 52.02 and Rafiq
 ৳ 71.42 ([worked out below](#pooling)), and each sees only their own fare. Choose TeslaPay
@@ -486,6 +489,20 @@ Each Tesla is at its latest checkpoint: the pickup it waits at, else the last st
 reached, else its saved location. Points are rounded to about 110 m and carry no id or
 name, and a passenger can't choose one. Details are in the
 [nearby Teslas LLD](docs/lld/passenger-nearby-teslas.md).
+
+Road routes (added after phase 8), under `/api/v1`, for drawing only:
+
+| Method | Route                              | Who       | Does                                                           | Errors   |
+| ------ | ---------------------------------- | --------- | -------------------------------------------------------------- | -------- |
+| POST   | `/fare-estimates`                  | passenger | Also returns `path: { legs }`, the trip's road                 | as above |
+| GET    | `/bookings/:id/path`               | passenger | `{ legs }`: the ride's own road, pickup to destination         | 404      |
+| GET    | `/driver/pool/path`                | driver    | `{ legs }`: the road from Bullet through each stop not reached | —        |
+| GET    | `/driver/requests/:bookingId/path` | driver    | `{ legs }`: an open request's road, pickup to destination      | 404      |
+
+Each leg is `{ method, points: [[lat, lng], …] }`, with `method` `routed` or `fallback` (a
+straight line, when the map service can't answer). Shapes come from OpenRouteService once
+per leg and are cached. A passenger never gets the shared trip's route. Details are in the
+[route-paths LLD](docs/lld/route-paths.md).
 
 Every error has the same shape (NFR-35):
 
@@ -754,8 +771,13 @@ the full list. Specific to the current state:
   by hand with a correcting ledger entry.
 - While the map service is failing, fallback distances aren't cached. The same 3 requests
   then ask it again on every refresh, and a fourth waits until it recovers.
-- The dashed line on the driver's map joins the stops in order, with arrows; it isn't the
-  road. Bullet glides between stops in a straight line.
+- Maps draw the road from OpenRouteService. Without a key, or while it fails, a leg is a
+  straight dashed line and the legend says so. Bullet still glides between stops in a
+  straight line, not along the road.
+- A passenger sees only their own trip by road. When pooled, the Tesla may detour up to
+  1 km through other riders' stops, which their map doesn't show (FR-P8).
+- With a key, Nusrat's and Rafiq's story rides don't pool: by road, Rafiq's ride would
+  be a 1.15 km detour, over the 1 km limit. They pool with the no-key distances.
 - A passenger's nearby Teslas are up to 4 s old, rounded to about 110 m, and measured in a
   straight line. A Tesla shows at its last stop, not along the road between stops. The
   seed has one Tesla, so the demo shows at most one; sign up another driver to see more.

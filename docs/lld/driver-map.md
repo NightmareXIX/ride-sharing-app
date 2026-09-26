@@ -19,7 +19,7 @@ Added after phase 8. On the driver's map, Bullet stayed where the trip began unt
 
 **Out**
 
-- Drawing the road itself. The line still shows the stop order only.
+- Drawing the road itself. The line still shows the stop order only. (Now drawn: see `route-paths.md`.)
 - Gliding along roads. The Tesla glides in a straight line.
 
 ---
@@ -76,6 +76,8 @@ Saving a new location while idle glides the Tesla the same way.
 Each arrowhead is a small SVG marker on the stop. It is rotated to the leg's angle on screen, and its tip sits a fixed number of pixels from the stop's centre, so it stays the same at any zoom. The angle comes from Leaflet's own projection. A leg of zero length has no arrow.
 
 ### Destination preview
+
+Since route-paths, the button reads **See route** and also draws the request's trip by road (route-paths LLD §4).
 
 Each request in the driver's list has a **See destination** button. It puts that request's destination on the map, so the driver can see where the ride goes before choosing it (FR-D8). The driver already sees the destination's name in the list, and may see its place before accepting (phase 3 LLD §4, NFR-9). The passenger's name stays hidden until acceptance. No server change: `GET /driver/requests` already sends the destination.
 
