@@ -320,18 +320,15 @@ function DriverDashboard({
   const tesla = spot ? { point: spot.point, label: vehicle.name } : undefined;
   const markers: MapMarker[] = [];
   if (draft) markers.push({ key: 'draft', point: draft, label: 'New location', tone: 'draft' });
-  for (const booking of trip?.bookings ?? []) {
+  // Every stop of the trip, named after its passenger. Those already reached are faded.
+  for (const stop of trip?.stops ?? []) {
+    const pickup = stop.type === 'pickup';
     markers.push({
-      key: `pickup-${booking.id}`,
-      point: booking.pickup,
-      label: `Pickup: ${booking.passenger.name}`,
-      tone: 'pickup',
-    });
-    markers.push({
-      key: `destination-${booking.id}`,
-      point: booking.destination,
-      label: booking.destination.label,
-      tone: 'destination',
+      key: `stop-${stop.id}`,
+      point: stop.place,
+      label: `${pickup ? 'Pickup' : 'Drop-off'}: ${stop.passenger.name}`,
+      tone: pickup ? 'pickup' : 'destination',
+      faded: stop.actualOdometerKm !== null,
     });
   }
   // The stops still to come, in order, from the Tesla. A pickup it waits at isn't ahead.

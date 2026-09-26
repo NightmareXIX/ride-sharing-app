@@ -23,6 +23,8 @@ export interface MapMarker {
   point: LatLng;
   label: string;
   tone: MarkerTone;
+  // Done with, e.g. a stop already reached: drawn faint, labelled only on hover.
+  faded?: boolean;
 }
 
 export interface MapTesla {
@@ -213,17 +215,18 @@ export default function MapPickerClient({ markers, tesla, path, onPick, label }:
         )}
         {markers.map((marker) => (
           <CircleMarker
-            key={marker.key}
+            // A tooltip can't stop being permanent, so fading draws the marker afresh.
+            key={`${marker.key}${marker.faded ? ':faded' : ''}`}
             center={marker.point}
             radius={9}
             pathOptions={{
               color: '#ffffff',
               weight: 3,
               fillColor: TONE_COLOURS[marker.tone],
-              fillOpacity: 1,
+              fillOpacity: marker.faded ? 0.35 : 1,
             }}
           >
-            <Tooltip direction="top" offset={[0, -8]} permanent>
+            <Tooltip direction="top" offset={[0, -8]} permanent={!marker.faded}>
               {marker.label}
             </Tooltip>
           </CircleMarker>
