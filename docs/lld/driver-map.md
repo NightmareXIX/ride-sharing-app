@@ -14,7 +14,7 @@ Added after phase 8. On the driver's map, Bullet stayed where the trip began unt
 - When a trip ends, the Tesla's saved location becomes where the trip ended.
 - The driver's map shows the Tesla at the stop the driver has reached, and glides it there.
 - An arrow at the end of each leg of the dashed stop-order line.
-- Drop-offs named after their passenger; stops already reached faded.
+- Drop-offs named after their passenger, one label for stops at the same place, and stops already reached faded.
 
 **Out**
 
@@ -64,7 +64,7 @@ A driver who arrived at a pickup and then cancels ends up at the last stop reach
 |---|---|
 | Tesla | At the point from §2. Drawn above the stops, with its label below them. Glides from its old point to the new one in about 0.7 s. It doesn't glide on first load, and jumps straight there when the device asks for reduced motion. |
 | Dashed line | Starts at the Tesla. An arrowhead points into each stop, just outside its dot. |
-| Stops | `Pickup: Rafiq` and `Drop-off: Rafiq`. A stop already reached is faded, and its label shows on hover. |
+| Stops | `Pickup: Rafiq` and `Drop-off: Rafiq`. Stops of one kind at one place share a dot and a label, e.g. `Pickup: Rafiq & Nusrat`, so neither hides the other. A stop already reached is faded, and its label shows on hover; a shared one fades once all of its stops are reached. |
 | Your location | Says where the Tesla is, e.g. "At Rafiq's pickup · Banani Road 11". |
 | Caption | "The dashed line shows the order of your stops, with arrows, not the road." |
 
