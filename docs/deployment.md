@@ -71,16 +71,20 @@ type **Free**, health check path `/health/ready`, and the same environment varia
 
 1. Sign up at [vercel.com](https://vercel.com) with GitHub (the free Hobby plan).
 2. Choose **Add New → Project** and import the repository.
-3. Set **Root Directory** to `apps/web`. Vercel detects Next.js.
-4. Under **Environment Variables**, add `API_URL` with the Render address from step 3 (no
+3. Set **Root Directory** to `apps/web`, the website, not `apps/api`. The preset changes
+   to Next.js.
+4. Under **Build and Output Settings**, override **Install Command** with
+   `cd ../.. && npm ci`. The repo is an npm workspace, and shared tools such as TypeScript
+   are installed from the root lockfile. Without this, Vercel installs only the website's own
+   packages, and the build fails.
+5. Under **Environment Variables**, add `API_URL` with the Render address from step 3 (no
    trailing slash), for Production and Preview. Next.js reads it at **build** time to set up
    the proxy, so a change needs a redeploy.
-5. Deploy.
-6. In **Settings → Git**, set the **Production Branch** to `pre-release`. At release it
-   moves to `release/v1.0.0`.
-
-If the install step fails to find the workspace packages, set **Install Command** to
-`cd ../.. && npm ci` under **Settings → Build and Deployment**, and redeploy.
+6. Deploy. The import always builds the default branch (`master`) first.
+7. In **Settings → Git**, set the **Production Branch** to `pre-release`, then redeploy. At
+   release it moves to `release/v1.0.0`.
+8. Optional: in **Settings → Functions**, set the region to Singapore (`sin1`), next to the
+   API and database.
 
 ## 5. Check it
 
