@@ -110,6 +110,18 @@ describe('fare estimate endpoint (FR-P4)', () => {
       seatMultiplier: '1.50',
       optionMultiplier: '1.05',
       estimatedFare: expect.stringMatching(/^\d+\.\d{2}$/),
+      // The road to draw is a straight line for the same reason (route-paths LLD §3).
+      path: {
+        legs: [
+          {
+            method: 'fallback',
+            points: [
+              [BANANI.lat, BANANI.lng],
+              [MOHAKHALI.lat, MOHAKHALI.lng],
+            ],
+          },
+        ],
+      },
     });
     const { rows } = await pool.query('SELECT 1 FROM bookings');
     expect(rows).toHaveLength(0);

@@ -3,6 +3,7 @@ import type { SessionConfig } from '../../auth/session.js';
 import type { Database } from '../../db/client.js';
 import type { DispatchConfig } from '../../domain/dispatch.js';
 import type { DistanceService } from '../../geo/distance.js';
+import type { PathService } from '../../geo/path.js';
 import { authRouter } from './auth.js';
 import { bookingsRouter } from './bookings.js';
 import { driverRouter } from './driver.js';
@@ -15,6 +16,8 @@ export interface V1Deps {
   db: Database;
   session: SessionConfig;
   distance: DistanceService;
+  // Road shapes for the map only (route-paths LLD).
+  paths: PathService;
   dispatch: DispatchConfig;
 }
 

@@ -10,6 +10,7 @@ import {
   listRideHistory,
   requestRide,
 } from '../../services/bookings.js';
+import { bookingPath } from '../../services/paths.js';
 import type { V1Deps } from './index.js';
 import { bookingId, trip } from './schemas.js';
 
@@ -50,6 +51,13 @@ export function bookingsRouter(deps: V1Deps): Router {
   router.get('/:id', async (req, res) => {
     const booking = await getBooking(db, currentSession(req).userId, bookingId(req.params.id));
     res.json({ booking });
+  });
+
+  // The ride's own road, pickup to destination, to draw (route-paths LLD §3). Never the
+  // trip it shares, which passes other passengers' stops (FR-P8).
+  router.get('/:id/path', async (req, res) => {
+    const id = bookingId(req.params.id);
+    res.json(await bookingPath(deps, req.log, currentSession(req).userId, id));
   });
 
   router.post('/:id/cancel', async (req, res) => {

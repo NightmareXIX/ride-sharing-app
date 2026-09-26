@@ -11,6 +11,7 @@ import {
   markNoShow,
   startTrip,
 } from '../../services/pools.js';
+import { driverRoutePath, requestPath } from '../../services/paths.js';
 import { listNearbyRequests } from '../../services/requests.js';
 import { getDriverVehicle, goOffline, goOnline, setLocation } from '../../services/vehicles.js';
 import type { V1Deps } from './index.js';
@@ -45,6 +46,12 @@ export function driverRouter(deps: V1Deps): Router {
     res.json({ requests: await listNearbyRequests(deps, req.log, driverId, dispatch) });
   });
 
+  // An open request's road, pickup to destination, for the driver to preview (route-paths
+  // LLD §3). Read when the driver asks, never by the 4 s list.
+  router.get('/requests/:bookingId/path', async (req, res) => {
+    res.json(await requestPath(deps, req.log, bookingId(req.params.bookingId)));
+  });
+
   // Accepting twice returns the same trip (FR-C5, NFR-37).
   router.post('/requests/:bookingId/accept', async (req, res) => {
     const id = bookingId(req.params.bookingId);
@@ -55,6 +62,12 @@ export function driverRouter(deps: V1Deps): Router {
   // The trip in progress, polled every 4 seconds (NFR-3).
   router.get('/pool', async (req, res) => {
     res.json({ pool: await getDriverTrip(db, currentSession(req).userId) });
+  });
+
+  // The road still to come, from the Tesla through each stop not reached (route-paths LLD
+  // §3). Read when the stops change, not on every poll.
+  router.get('/pool/path', async (req, res) => {
+    res.json(await driverRoutePath(deps, req.log, currentSession(req).userId));
   });
 
   // One passenger's ride, a step at a time (FR-D10). Each returns the trip after the step.
