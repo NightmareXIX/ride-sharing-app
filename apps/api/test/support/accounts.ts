@@ -6,9 +6,10 @@ import type { TestServer } from './server.js';
 export const PASSWORD = 'correct-horse-battery';
 
 // Empties every table. users cascades to wallets, vehicles, bookings and their history;
-// the distance cache stands alone, and a routed distance left there would leak between tests.
+// the distance and road-shape caches stand alone, and a routed leg left there would leak
+// between tests.
 export async function resetDb(pool: pg.Pool): Promise<void> {
-  await pool.query('TRUNCATE users, distance_cache CASCADE');
+  await pool.query('TRUNCATE users, distance_cache, route_path_cache CASCADE');
 }
 
 export function passengerSignUp(overrides: Record<string, unknown> = {}) {
