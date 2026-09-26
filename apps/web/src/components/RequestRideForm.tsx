@@ -18,7 +18,9 @@ import {
 } from '@/lib/booking';
 import type { LatLng, Place } from '@/lib/geo';
 import { formatTaka, toPoysha } from '@/lib/money';
+import { describeNearby } from '@/lib/nearby';
 import { describePoint } from '@/lib/places';
+import { useNearbyTeslas } from '@/lib/useNearbyTeslas';
 import { useSlowFlag } from '@/lib/useSlowFlag';
 
 // The API's hard limit; it also refuses more seats than the largest registered Tesla.
@@ -189,6 +191,7 @@ export function RequestRideForm({
   const [alert, setAlert] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const slow = useSlowFlag(pending !== null);
+  const nearby = useNearbyTeslas(pickup);
 
   // Any change makes the shown price stale, so it is cleared (the price always matches).
   function changed() {
@@ -322,11 +325,22 @@ export function RequestRideForm({
         <FieldError id="field-stops-error" message={stopError} />
       </div>
 
-      <MapPicker
-        label={`Map of Dhaka. Tap to set the ${choosing}.`}
-        markers={markers}
-        onPick={busy ? undefined : pickOnMap}
-      />
+      <div className="space-y-2">
+        <MapPicker
+          label={`Map of Dhaka. Tap to set the ${choosing}.`}
+          markers={markers}
+          nearby={pickup && nearby ? { center: pickup, ...nearby } : undefined}
+          onPick={busy ? undefined : pickOnMap}
+        />
+        <p aria-live="polite" className="flex items-start gap-2 text-sm text-slate-600">
+          <span aria-hidden className="mt-1.5 size-2.5 shrink-0 rounded-full bg-slate-900" />
+          {!pickup
+            ? 'Set a pickup to see Teslas near it.'
+            : nearby
+              ? describeNearby(nearby)
+              : 'Looking for Teslas near your pickup…'}
+        </p>
+      </div>
       <div>
         <p className="mb-2 text-sm text-slate-500">
           Or choose a spot for the {choosing === 'pickup' ? 'pickup' : 'destination'}:

@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import { CRS, divIcon, latLngBounds, type CircleMarker as LeafletCircleMarker } from 'leaflet';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Circle,
   CircleMarker,
   MapContainer,
   Marker,
@@ -32,8 +33,17 @@ export interface MapTesla {
   label: string;
 }
 
+// Teslas near a point, with the circle they were looked for in. Only for looking: they
+// can't be tapped, and the map doesn't move to follow them.
+export interface MapNearby {
+  center: LatLng;
+  radiusKm: number;
+  teslas: LatLng[];
+}
+
 export interface MapPickerProps {
   markers: MapMarker[];
+  nearby?: MapNearby;
   // The driver's Tesla, drawn above everything else. It glides when its point changes.
   tesla?: MapTesla;
   // Points joined by a dashed line with an arrow into each, e.g. the stops still to come, in
@@ -167,6 +177,38 @@ function MovingTesla({ point, label }: MapTesla) {
   );
 }
 
+// Below the path and stops (overlay 400), so a Tesla never hides the pickup. Not
+// interactive, so a tap on a Tesla sets a stop there like anywhere else.
+function NearbyLayer({ center, radiusKm, teslas }: MapNearby) {
+  return (
+    <Pane name="nearby" style={{ zIndex: 350 }}>
+      <Circle
+        center={center}
+        radius={radiusKm * 1000}
+        interactive={false}
+        pathOptions={{
+          color: TESLA_COLOUR,
+          weight: 2,
+          opacity: 0.6,
+          dashArray: '4 6',
+          fillColor: TESLA_COLOUR,
+          fillOpacity: 0.07,
+        }}
+      />
+      {teslas.map((point, i) => (
+        <CircleMarker
+          // Two Teslas can round to one point.
+          key={`${i}:${point.lat},${point.lng}`}
+          center={point}
+          radius={6}
+          interactive={false}
+          pathOptions={{ color: '#ffffff', weight: 2, fillColor: TESLA_COLOUR, fillOpacity: 0.85 }}
+        />
+      ))}
+    </Pane>
+  );
+}
+
 // Keeps the points in view when they change, e.g. after a quick pick far away.
 function FollowPoints({ points }: { points: LatLng[] }) {
   const map = useMap();
@@ -184,7 +226,14 @@ function FollowPoints({ points }: { points: LatLng[] }) {
 }
 
 // An OpenStreetMap map of Dhaka with the required credit (NFR-24).
-export default function MapPickerClient({ markers, tesla, path, onPick, label }: MapPickerProps) {
+export default function MapPickerClient({
+  markers,
+  nearby,
+  tesla,
+  path,
+  onPick,
+  label,
+}: MapPickerProps) {
   const points = [...(tesla ? [tesla.point] : []), ...markers.map((m) => m.point)];
   const first = points[0] ?? DHAKA_CENTER;
   return (
@@ -206,6 +255,7 @@ export default function MapPickerClient({ markers, tesla, path, onPick, label }:
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
+        {nearby && <NearbyLayer {...nearby} />}
         {path && path.length > 1 && (
           <>
             <Polyline
