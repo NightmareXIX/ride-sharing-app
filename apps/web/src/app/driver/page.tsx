@@ -317,10 +317,8 @@ function DriverDashboard({
 
   // Where the driver is: the stop reached, or the saved location (driver-map LLD §2).
   const spot = teslaSpot(vehicle.location, trip);
+  const tesla = spot ? { point: spot.point, label: vehicle.name } : undefined;
   const markers: MapMarker[] = [];
-  if (spot) {
-    markers.push({ key: 'tesla', point: spot.point, label: vehicle.name, tone: 'driver' });
-  }
   if (draft) markers.push({ key: 'draft', point: draft, label: 'New location', tone: 'draft' });
   for (const booking of trip?.bookings ?? []) {
     markers.push({
@@ -465,6 +463,7 @@ function DriverDashboard({
             onTrip ? 'Map of your current ride.' : 'Map of Dhaka. Tap to choose your location.'
           }
           markers={markers}
+          tesla={tesla}
           path={routePath}
           onPick={busy === null && !onTrip ? setDraft : undefined}
         />
