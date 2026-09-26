@@ -1,0 +1,29 @@
+# Render Blueprint for the API (NFR section 1): New → Blueprint in the Render dashboard.
+# The website is on Vercel and the database on Neon; see docs/deployment.md.
+services:
+  - type: web
+    name: dhaka-tesla-pool-api
+    runtime: docker
+    plan: free
+    # Same region as the Neon database, so queries stay fast.
+    region: singapore
+    # The branch the evaluated version is deployed from.
+    branch: pre-release
+    # The Dockerfile copies the root lockfile, so it builds from the repo root.
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    # The container migrates and seeds before listening, so a deploy is live only once
+    # the database answers.
+    healthCheckPath: /health/ready
+    envVars:
+      # Neon's direct (unpooled) connection string, with ?sslmode=require.
+      - key: DATABASE_URL
+        sync: false
+      # A base64-encoded 256-bit value, well over the 32 characters config.ts requires.
+      - key: SESSION_SECRET
+        generateValue: true
+      # Road distances and shapes. Left empty, everything uses the straight-line fallback.
+      - key: ORS_API_KEY
+        sync: false
+      - key: LOG_LEVEL
+        value: info
