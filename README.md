@@ -342,10 +342,10 @@ To see a pooled ride: with Jashim online at Banani Road 11, have Nusrat request 
   Jashim's reaches ৳ 123.44.
 - **With an OpenRouteService key.** Banani Road 11 → Gulshan 1 is refused by road: it would
   be a 1.15 km detour, over the 1 km limit, so Jashim never sees it. Instead, have Rafiq
-  tap his destination on Airport Road, just north of Mohakhali (about 23.7810, 90.4003),
-  which lies on Nusrat's road. Jashim sees it adding about 0.001 km. **See route** draws
-  Rafiq's trip in violet on top of Jashim's route. Accept it: Rafiq is dropped first, and
-  the pair pay about ৳ 78.90 and ৳ 56.72.
+  choose the **Airport Road** quick pick as his destination, which lies on Nusrat's road.
+  Jashim sees it adding 0.001 km, and **See route** draws Rafiq's trip in violet on top of
+  Jashim's route. Accept it: Rafiq is dropped first, and the pair pay ৳ 78.90 and ৳ 56.72
+  (as measured on 26 Sep 2026).
 
 To see a same-gender pool: with Jashim online at Banani Road 11, have Nusrat request Banani
 Road 11 → Mohakhali as **Same-gender** and accept it. Jashim's trip is marked **Women
@@ -594,8 +594,8 @@ to Airport Road, south along it, past Wireless Gate, and turns back at the divid
 | **Final**                                                            | **৳ 78.90**         | **৳ 56.72**          |
 
 The computed fares are 78.904 and 56.724 before the single half-up rounding (FR-F5).
-Airport Road isn't a quick pick, so tap it on the map. A tap a few metres away gives
-slightly different figures.
+Airport Road is a quick pick at exactly this point, so choosing it reproduces these figures.
+A point tapped nearby gives slightly different ones.
 
 **Why the Mohakhali pin moved.** At the first Mohakhali pin (23.7781, 90.4050), Gulshan 1
 branches off the way to Mohakhali, and whichever passenger is dropped second rides about
@@ -767,7 +767,10 @@ rarely taps that fast, and a retry succeeds.
   checks (FR-W3, FR-W7) were planned for phases 4 and 6. They are enforced from phase 2
   because creating a request depends on them.
 - **The Mohakhali pin.** The Mohakhali quick pick is Wireless Gate, so Nusrat's and
-  Rafiq's story trips pool under the matching rule ([why](#pooling)).
+  Rafiq's story trips pool under the matching rule with no map key ([why](#pooling)).
+- **The Airport Road pin.** With a map key they don't pool, so the Airport Road quick pick
+  sits on Nusrat's road to Mohakhali, for a second ride that pools on real roads
+  ([Example 2](#pooling)).
 - **Where a trip's km start.** A trip's odometer reads 0 where the Tesla stood when the trip
   began. Two stops at the same place are 0 km apart, with no map request.
 - **Nearby means a straight line.** The 2 km search radius is measured as the crow flies
