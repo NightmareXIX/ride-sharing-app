@@ -9,10 +9,13 @@ import {
   type Booking,
 } from '@/lib/booking';
 import { formatTaka } from '@/lib/money';
+import { isApproximate, usePath } from '@/lib/path';
 import { formatDhakaTime } from '@/lib/time';
 import { secondaryButton } from './buttons';
 import { ConfirmAction } from './ConfirmAction';
 import { FareBreakdown } from './FareBreakdown';
+import { MapLegend, type LegendItem } from './MapLegend';
+import { MapPicker, type MapMarker } from './MapPicker';
 import { Detail, fineLine, Route } from './RideParts';
 
 // Where the ride is, in the passenger's words (FR-P5).
@@ -63,6 +66,39 @@ function optionNote(booking: Booking, gender: Gender): string | null {
   }
 }
 
+// The passenger's own trip on a read-only map: pickup, destination and the road between
+// them (route-paths LLD §4). Never the Tesla's route, which passes other riders' stops
+// (FR-P8). A straight dashed line stands in until the road arrives.
+function RideMap({ booking }: { booking: Booking }) {
+  const road = usePath(`/bookings/${booking.id}/path`);
+  const markers: MapMarker[] = [
+    { key: 'pickup', point: booking.pickup, label: 'Pickup', tone: 'pickup' },
+    { key: 'destination', point: booking.destination, label: 'Destination', tone: 'destination' },
+  ];
+  // Named once the road is in: until then the dashed line only stands in for it.
+  const legend: LegendItem[] = !road
+    ? []
+    : isApproximate(road)
+      ? [{ key: 'trip', kind: 'approximate', label: 'Your trip, as a straight line' }]
+      : [{ key: 'trip', kind: 'trip', label: 'Your trip by road' }];
+  return (
+    <div className="mt-5">
+      <MapPicker
+        label="Map of your trip."
+        markers={markers}
+        routes={road ? [{ key: 'trip', tone: 'trip', legs: road }] : undefined}
+        path={road ? undefined : [booking.pickup, booking.destination]}
+      />
+      <MapLegend items={legend} />
+      {booking.rideOption !== 'solo' && (
+        <p className="mt-1 text-sm text-slate-500">
+          If you share the Tesla, the ride may detour up to 1 km to pick up or drop off others.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // The passenger's ride in progress. It shows only their own booking (FR-P8).
 export function CurrentRequest({
   booking,
@@ -97,6 +133,7 @@ export function CurrentRequest({
       </div>
 
       <Route booking={booking} />
+      <RideMap booking={booking} />
 
       <dl className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
         {booking.driver && (
