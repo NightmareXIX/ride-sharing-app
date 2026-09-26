@@ -6,7 +6,8 @@ Dhaka Tesla Pool is a ride-pooling app. Passengers ask for a ride, and a driver 
 several of them in one Tesla when their trips go the same way. The Tesla never carries more
 people than it has seats, and each passenger pays only for their own part of the trip.
 
-- **Live site:** _added once deployed_ (see [Deployment](#deployment))
+- **Live site:** https://dhaka-tesla-pool-omega.vercel.app (the first visit can take a
+  minute while the free server wakes up)
 - **Demo video:** _added at release_ (see [Demo video](#demo-video))
 - **Try it without signing up:** one-tap demo accounts, see [Demo credentials](#demo-credentials)
 
@@ -544,13 +545,18 @@ before replaying a story.
 
 ## Deployment
 
-_The live addresses are added here once the deploy is checked._
+**Live site: https://dhaka-tesla-pool-omega.vercel.app**
 
-| Part     | Where                    | Address |
-| -------- | ------------------------ | ------- |
-| Website  | Vercel                   | _soon_  |
-| API      | Render, Singapore (free) | _soon_  |
-| Database | Neon, Singapore (free)   | —       |
+| Part     | Where                    | Address                                                                           |
+| -------- | ------------------------ | --------------------------------------------------------------------------------- |
+| Website  | Vercel                   | https://dhaka-tesla-pool-omega.vercel.app                                         |
+| API      | Render, Singapore (free) | Reached through the website: `https://dhaka-tesla-pool-omega.vercel.app/api/v1/…` |
+| Database | Neon, Singapore (free)   | Private                                                                           |
+
+Checked on 27 Sep 2026 by running the pooled ride on the live site. Nusrat (Banani Road 11 →
+Mohakhali, TeslaPay) and a second passenger (Banani Road 11 → Airport Road, Cash) shared
+Bullet. They paid ৳ 78.90 and ৳ 56.72, as in [Example 2](#pooling), and Jashim's earnings
+read ৳ 135.62.
 
 The live site has an OpenRouteService key, so maps show real roads and the
 [with-key pooling example](#pooling) applies.
