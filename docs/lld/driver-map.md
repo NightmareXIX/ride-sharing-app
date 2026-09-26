@@ -1,7 +1,7 @@
 # Driver map — where the Tesla is: Low-Level Design
 
 **Branch:** `feature/driver-map`
-**Covers:** FR-D4, FR-R7, FR-C3, FR-C7 · NFR-22, NFR-24
+**Covers:** FR-D4, FR-D8, FR-R7, FR-C3, FR-C7 · NFR-9, NFR-22, NFR-24
 
 Added after phase 8. On the driver's map, Bullet stayed where the trip began until the trip was over, often hidden under a pickup dot. The dashed line through the stops had no direction, and a drop-off was labelled with a place name only. This change shows the Tesla where the driver is, glides it there after each step, and adds an arrowhead to each stop. Route planning, fares and the booking state machine don't change.
 
@@ -15,6 +15,7 @@ Added after phase 8. On the driver's map, Bullet stayed where the trip began unt
 - The driver's map shows the Tesla at the stop the driver has reached, and glides it there.
 - An arrow at the end of each leg of the dashed stop-order line.
 - Drop-offs named after their passenger, one label for stops at the same place, and stops already reached faded.
+- A **See destination** button on each request, which marks its destination on the map.
 
 **Out**
 
@@ -73,6 +74,19 @@ Saving a new location while idle glides the Tesla the same way.
 ### Arrows
 
 Each arrowhead is a small SVG marker on the stop. It is rotated to the leg's angle on screen, and its tip sits a fixed number of pixels from the stop's centre, so it stays the same at any zoom. The angle comes from Leaflet's own projection. A leg of zero length has no arrow.
+
+### Destination preview
+
+Each request in the driver's list has a **See destination** button. It puts that request's destination on the map, so the driver can see where the ride goes before choosing it (FR-D8). The driver already sees the destination's name in the list, and may see its place before accepting (phase 3 LLD §4, NFR-9). The passenger's name stays hidden until acceptance. No server change: `GET /driver/requests` already sends the destination.
+
+| Part | Behaviour |
+|---|---|
+| Button | **See destination**, or **Hide destination** while that request is shown (`aria-pressed`). Only one request is shown at a time: tapping another moves the preview to it. It works while an accept runs, since it only changes the map. |
+| Destination | A violet dot, `Drop-off: Gulshan 1`. Violet, not red, so it can't be taken for one of the trip's own drop-offs. |
+| Its pickup | Labelled `Pickup (preview)`, so it can be told apart from the other requests' pickups. |
+| Line | None. The dashed line keeps meaning the driver's own route. |
+| Map | Refits to include the preview, and back once it is hidden. |
+| Clearing | The preview shows only while its request is in the list, so it goes when the request is taken, cancelled or out of range. Accepting a request clears it. |
 
 ---
 
