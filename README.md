@@ -331,16 +331,21 @@ ends with the fare to pay in cash and how it was worked out. To see a driver can
 **Cancel ride** before starting: the request goes back to waiting and Nusrat is told why.
 
 To see a pooled ride: with Jashim online at Banani Road 11, have Nusrat request Banani Road
-11 → Mohakhali and accept it. Then have Rafiq request Banani Road 11 → Gulshan 1. Jashim
-sees it under **Requests on your route**, adding 0.970 km. This uses the no-key distances:
-with an OpenRouteService key, Rafiq's ride is a 1.15 km detour by road, over the 1 km
-limit, so it isn't listed (see the [route-paths LLD](docs/lld/route-paths.md#5-small-deviations-from-the-route)).
-Accept it: the route lists
-Nusrat's pickup, Rafiq's pickup, Nusrat's drop-off, then Rafiq's, and only the next stop
-has a button. Take the steps in order. With no map key, Nusrat pays ৳ 52.02 and Rafiq
-৳ 71.42 ([worked out below](#pooling)), and each sees only their own fare. Choose TeslaPay
-for both, and their wallets end at ৳ 447.98 and ৳ 428.58 while Jashim's reaches
-৳ 123.44.
+11 → Mohakhali and accept it. What Rafiq requests next depends on whether a map key is set
+([both worked out below](#pooling)):
+
+- **No map key.** Have Rafiq request Banani Road 11 → Gulshan 1. Jashim sees it under
+  **Requests on your route**, adding 0.970 km. Accept it: the route lists Nusrat's pickup,
+  Rafiq's pickup, Nusrat's drop-off, then Rafiq's, and only the next stop has a button.
+  Take the steps in order. Nusrat pays ৳ 52.02 and Rafiq ৳ 71.42, and each sees only their
+  own fare. Choose TeslaPay for both, and their wallets end at ৳ 447.98 and ৳ 428.58 while
+  Jashim's reaches ৳ 123.44.
+- **With an OpenRouteService key.** Banani Road 11 → Gulshan 1 is refused by road: it would
+  be a 1.15 km detour, over the 1 km limit, so Jashim never sees it. Instead, have Rafiq
+  tap his destination on Airport Road, just north of Mohakhali (about 23.7810, 90.4003),
+  which lies on Nusrat's road. Jashim sees it adding about 0.001 km. **See route** draws
+  Rafiq's trip in violet on top of Jashim's route. Accept it: Rafiq is dropped first, and
+  the pair pay about ৳ 78.90 and ৳ 56.72.
 
 To see a same-gender pool: with Jashim online at Banani Road 11, have Nusrat request Banani
 Road 11 → Mohakhali as **Same-gender** and accept it. Jashim's trip is marked **Women
@@ -539,8 +544,12 @@ I/O, so it is tested on its own (NFR-26). A route check needs many road distance
 makes one OpenRouteService matrix request for all of them and caches the answers. Each
 refresh of the driver's list makes at most 3 such requests (NFR-3).
 
-**Nusrat and Rafiq's trip (FR-L4).** Both start at Banani Road 11, where Bullet waits. With
-no map key the distances are straight-line × 1.3: Banani → Mohakhali 1.835 km, Banani →
+**Nusrat and Rafiq's trip (FR-L4).** Both start at Banani Road 11, where Bullet waits, and
+Jashim accepts Nusrat first. The result depends on how distances are measured, so there
+are two worked examples: one with no map key, which anyone can reproduce, and one with an
+OpenRouteService key, on real roads.
+
+**Example 1: no map key (straight-line × 1.3).** Banani → Mohakhali 1.835 km, Banani →
 Gulshan 1 2.287 km, Mohakhali → Gulshan 1 0.970 km.
 
 - Jashim accepts Nusrat first. The route is her pickup at 0.000 km, then her drop-off at
@@ -560,15 +569,41 @@ Gulshan 1 2.287 km, Mohakhali → Gulshan 1 0.970 km.
 | Computed                                                             | 30 + 36.70 − 14.68 | 30 + 56.10 − 14.68 |
 | **Final**                                                            | **৳ 52.02**        | **৳ 71.42**        |
 
-Both ride 1 seat on a Pool ride, so both multipliers are 1. With an OpenRouteService key
-the distances come from real roads, so the numbers differ.
+Both ride 1 seat on a Pool ride, so both multipliers are 1.
+
+**Example 2: with an OpenRouteService key (real roads).** Measured on 26 Sep 2026. Road data
+changes, so a later run can differ slightly. Banani → Mohakhali 3.335 km: the road runs west
+to Airport Road, south along it, past Wireless Gate, and turns back at the divider. Banani
+→ Gulshan 1 3.061 km, Mohakhali → Gulshan 1 0.876 km, Gulshan 1 → Mohakhali 1.969 km.
+
+- **Rafiq to Gulshan 1 is refused.** With Nusrat dropped first, his ride is 3.335 + 0.876 =
+  4.211 km against a direct 3.061, a 1.150 km detour. With Rafiq dropped first, Nusrat's
+  ride is 3.061 + 1.969 = 5.030 km against 3.335, a 1.695 km detour. Both are over 1 km
+  (FR-L3(c)), so the request isn't listed. This is FR-L4's defined result on real roads.
+- **Rafiq to Airport Road (23.78102, 90.40028), a point on Nusrat's road, pools.** His
+  direct trip is 2.227 km (estimate ৳ 74.54), and it adds 0.001 km to the route. The route
+  becomes: pick up Nusrat 0.000, pick up Rafiq 0.000, drop off Rafiq 2.227, drop off
+  Nusrat 3.336. Nusrat's detour is 0.001 km, under 1 km and under 0.4 × 2.227 = 0.891.
+
+| Fare = (30 + 20 × actual km − 8 × shared km), capped at the estimate | Nusrat              | Rafiq (Airport Road) |
+| -------------------------------------------------------------------- | ------------------- | -------------------- |
+| Odometer at pickup → drop-off                                        | 0.000 → 3.336       | 0.000 → 2.227        |
+| Actual km, shared km                                                 | 3.336, 2.227        | 2.227, 2.227         |
+| Estimate: 30 + 20 × direct km                                        | 30 + 66.70 = 96.70  | 30 + 44.54 = 74.54   |
+| Computed                                                             | 30 + 66.72 − 17.816 | 30 + 44.54 − 17.816  |
+| **Final**                                                            | **৳ 78.90**         | **৳ 56.72**          |
+
+The computed fares are 78.904 and 56.724 before the single half-up rounding (FR-F5).
+Airport Road isn't a quick pick, so tap it on the map. A tap a few metres away gives
+slightly different figures.
 
 **Why the Mohakhali pin moved.** At the first Mohakhali pin (23.7781, 90.4050), Gulshan 1
 branches off the way to Mohakhali, and whichever passenger is dropped second rides about
 1.5 km further than their direct trip. FR-L3 allows 1 km, so they wouldn't pool. FR §13
 left this to be checked once routing was built. Rather than loosen the rule, the Mohakhali
 quick pick moved to Wireless Gate (23.7812, 90.4090), where the road from Mohakhali to
-Gulshan 1 begins.
+Gulshan 1 begins. That was judged on straight-line distances; on real roads the divider
+there still makes the detour too long (Example 2).
 
 ## Ride options
 
@@ -777,7 +812,8 @@ the full list. Specific to the current state:
 - A passenger sees only their own trip by road. When pooled, the Tesla may detour up to
   1 km through other riders' stops, which their map doesn't show (FR-P8).
 - With a key, Nusrat's and Rafiq's story rides don't pool: by road, Rafiq's ride would
-  be a 1.15 km detour, over the 1 km limit. They pool with the no-key distances.
+  be a 1.15 km detour, over the 1 km limit. They pool with the no-key distances; both
+  results are worked out under [Pooling](#pooling).
 - A passenger's nearby Teslas are up to 4 s old, rounded to about 110 m, and measured in a
   straight line. A Tesla shows at its last stop, not along the road between stops. The
   seed has one Tesla, so the demo shows at most one; sign up another driver to see more.
