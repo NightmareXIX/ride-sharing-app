@@ -100,6 +100,40 @@ export function teslaSpot(saved: LatLng | null, trip: DriverTrip | null): TeslaS
   return saved ? { point: saved, stop: null } : null;
 }
 
+// Stops of one kind at one place, e.g. two passengers picked up at Banani Road 11. Drawn
+// as one dot, so their labels don't hide each other.
+export interface StopGroup {
+  key: string;
+  type: TripStop['type'];
+  point: LatLng;
+  names: string[];
+  // Every stop in it has been reached.
+  reached: boolean;
+}
+
+// In route order, by each group's first stop.
+export function groupStops(stops: readonly TripStop[]): StopGroup[] {
+  const groups = new Map<string, StopGroup>();
+  for (const stop of stops) {
+    const at = `${stop.type}:${stop.place.lat},${stop.place.lng}`;
+    const reached = stop.actualOdometerKm !== null;
+    const group = groups.get(at);
+    if (group) {
+      group.names.push(stop.passenger.name);
+      group.reached &&= reached;
+    } else {
+      groups.set(at, {
+        key: stop.id,
+        type: stop.type,
+        point: stop.place,
+        names: [stop.passenger.name],
+        reached,
+      });
+    }
+  }
+  return [...groups.values()];
+}
+
 // "At Rafiq's pickup · Banani Road 11"
 export function describeSpot(stop: TripStop): string {
   const kind = stop.type === 'pickup' ? 'pickup' : 'drop-off';

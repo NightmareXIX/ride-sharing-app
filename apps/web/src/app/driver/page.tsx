@@ -19,6 +19,7 @@ import { formatTaka } from '@/lib/money';
 import { describePoint } from '@/lib/places';
 import {
   describeSpot,
+  groupStops,
   teslaSpot,
   type CompletedTrip,
   type DriverTrip,
@@ -320,15 +321,15 @@ function DriverDashboard({
   const tesla = spot ? { point: spot.point, label: vehicle.name } : undefined;
   const markers: MapMarker[] = [];
   if (draft) markers.push({ key: 'draft', point: draft, label: 'New location', tone: 'draft' });
-  // Every stop of the trip, named after its passenger. Those already reached are faded.
-  for (const stop of trip?.stops ?? []) {
-    const pickup = stop.type === 'pickup';
+  // Every stop of the trip, named after its passengers. Those already reached are faded.
+  for (const group of groupStops(trip?.stops ?? [])) {
+    const pickup = group.type === 'pickup';
     markers.push({
-      key: `stop-${stop.id}`,
-      point: stop.place,
-      label: `${pickup ? 'Pickup' : 'Drop-off'}: ${stop.passenger.name}`,
+      key: `stop-${group.key}`,
+      point: group.point,
+      label: `${pickup ? 'Pickup' : 'Drop-off'}: ${group.names.join(' & ')}`,
       tone: pickup ? 'pickup' : 'destination',
-      faded: stop.actualOdometerKm !== null,
+      faded: group.reached,
     });
   }
   // The stops still to come, in order, from the Tesla. A pickup it waits at isn't ahead.
