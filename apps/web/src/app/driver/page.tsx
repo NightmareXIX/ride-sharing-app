@@ -7,7 +7,8 @@ import { AppShell, Card } from '@/components/AppShell';
 import { primaryButton, secondaryButton } from '@/components/buttons';
 import { CompletedRideCard, DriverTripCard, type CompletedRide } from '@/components/DriverTripCard';
 import { FormAlert } from '@/components/forms';
-import { MapPicker, type MapMarker } from '@/components/MapPicker';
+import { MapLegend, type LegendItem } from '@/components/MapLegend';
+import { MapPicker, type MapMarker, type MapRoute } from '@/components/MapPicker';
 import { NearbyRequests } from '@/components/NearbyRequests';
 import { QuickPicks } from '@/components/QuickPicks';
 import { SeatMeter } from '@/components/SeatMeter';
@@ -16,6 +17,7 @@ import { FINE_AMOUNT } from '@/lib/booking';
 import { api, ApiError } from '@/lib/api';
 import type { LatLng } from '@/lib/geo';
 import { formatTaka } from '@/lib/money';
+import { isApproximate, usePath } from '@/lib/path';
 import { describePoint } from '@/lib/places';
 import {
   describeSpot,
@@ -66,7 +68,7 @@ function DriverDashboard({
   const [draft, setDraft] = useState<LatLng | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
   const [accepting, setAccepting] = useState<string | null>(null);
-  // The request whose destination is on the map (driver-map LLD §4).
+  // The request whose trip is on the map (driver-map LLD §4, route-paths LLD §4).
   const [previewing, setPreviewing] = useState<string | null>(null);
   // The passenger whose trip action is running.
   const [stepping, setStepping] = useState<string | null>(null);
@@ -133,6 +135,23 @@ function DriverDashboard({
 
   // The first check runs straight away; the rest every 4 seconds.
   usePolling(refreshRequests, searching, { immediate: true });
+
+  // Where the driver is: the stop reached, or the saved location (driver-map LLD §2).
+  const spot = teslaSpot(vehicle?.location ?? null, trip);
+  // The stops still to come, in order, from the Tesla. A pickup it waits at isn't ahead.
+  const aheadStops = (trip?.stops ?? []).filter(
+    (stop) => stop.actualOdometerKm === null && stop !== spot?.stop,
+  );
+  // The route by road, read again only when the Tesla's point or the stops ahead change
+  // (route-paths LLD §4). A re-planned stop gets a new id, so a new plan is read too.
+  const routeVersion =
+    spot && aheadStops.length > 0
+      ? [`${spot.point.lat},${spot.point.lng}`, ...aheadStops.map((stop) => stop.id)].join('|')
+      : null;
+  const road = usePath(routeVersion ? '/driver/pool/path' : null, routeVersion ?? '');
+  // The request whose trip is on the map, while it is still listed.
+  const previewed = searching ? requests?.find((request) => request.id === previewing) : undefined;
+  const previewRoad = usePath(previewed ? `/driver/requests/${previewed.id}/path` : null);
 
   // The trip in progress: a passenger may cancel at any moment (FR-P7).
   usePolling(async () => {
@@ -319,8 +338,6 @@ function DriverDashboard({
   // A driver with a passenger stays online and in place (FR-D3).
   const onTrip = trip !== null;
 
-  // Where the driver is: the stop reached, or the saved location (driver-map LLD §2).
-  const spot = teslaSpot(vehicle.location, trip);
   const tesla = spot ? { point: spot.point, label: vehicle.name } : undefined;
   const markers: MapMarker[] = [];
   if (draft) markers.push({ key: 'draft', point: draft, label: 'New location', tone: 'draft' });
@@ -335,16 +352,26 @@ function DriverDashboard({
       faded: group.reached,
     });
   }
-  // The stops still to come, in order, from the Tesla. A pickup it waits at isn't ahead.
-  const ahead = (trip?.stops ?? [])
-    .filter((stop) => stop.actualOdometerKm === null && stop !== spot?.stop)
-    .map((stop) => stop.place);
-  const routePath = spot && ahead.length > 0 ? [spot.point, ...ahead] : undefined;
+  // The stop order as a dashed line, until the road arrives or if it can't be drawn.
+  const stopOrder =
+    spot && aheadStops.length > 0 ? [spot.point, ...aheadStops.map((stop) => stop.place)] : [];
+  const routes: MapRoute[] = [];
+  const legend: LegendItem[] = [];
+  if (road && road.length > 0) {
+    routes.push({ key: 'route', tone: 'trip', legs: road });
+    legend.push(
+      isApproximate(road)
+        ? { key: 'route', kind: 'approximate', label: 'Your route, partly straight lines' }
+        : { key: 'route', kind: 'trip', label: 'Your route by road' },
+    );
+  } else if (!road && stopOrder.length > 0) {
+    legend.push({ key: 'route', kind: 'approximate', label: 'The order of your stops' });
+  }
 
   if (searching) {
     for (const request of requests ?? []) {
       // Shown only while the request is listed, so a taken one leaves the map with it.
-      const shown = request.id === previewing;
+      const shown = request.id === previewed?.id;
       markers.push({
         key: `request-${request.id}`,
         point: request.pickup,
@@ -360,6 +387,19 @@ function DriverDashboard({
         });
       }
     }
+  }
+  // The request's own trip, over the route: where they share a road, it lies on the route.
+  if (previewed && previewRoad) {
+    routes.push({ key: `preview-${previewed.id}`, tone: 'preview', legs: previewRoad });
+    const size =
+      previewed.addedKm === null
+        ? `${previewed.directKm} km`
+        : `adds ${previewed.addedKm} km to your route`;
+    legend.push({
+      key: 'preview',
+      kind: 'preview',
+      label: `Request’s trip, ${size}${isApproximate(previewRoad) ? ' (straight line)' : ''}`,
+    });
   }
 
   return (
@@ -476,14 +516,15 @@ function DriverDashboard({
             onTrip ? 'Map of your current ride.' : 'Map of Dhaka. Tap to choose your location.'
           }
           markers={markers}
+          routes={routes}
           tesla={tesla}
-          path={routePath}
+          path={road ? undefined : stopOrder}
           onPick={busy === null && !onTrip ? setDraft : undefined}
         />
+        <MapLegend items={legend} />
         {onTrip ? (
-          <p className="mt-3 text-sm text-slate-500">
-            Your Tesla moves to each stop as you reach it. The arrows show the order of your stops;
-            the dashed line isn’t the road.
+          <p className="mt-2 text-sm text-slate-500">
+            Your Tesla moves to each stop as you reach it. The arrows show the order of your stops.
           </p>
         ) : (
           <>
