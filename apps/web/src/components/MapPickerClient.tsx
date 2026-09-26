@@ -16,7 +16,7 @@ import {
 } from 'react-leaflet';
 import { DHAKA_CENTER, isInServiceArea, roundPoint, SERVICE_AREA, type LatLng } from '@/lib/geo';
 
-export type MarkerTone = 'pickup' | 'destination' | 'draft';
+export type MarkerTone = 'pickup' | 'destination' | 'draft' | 'preview';
 
 export interface MapMarker {
   key: string;
@@ -49,6 +49,8 @@ const TONE_COLOURS: Record<MarkerTone, string> = {
   pickup: '#059669',
   destination: '#dc2626',
   draft: '#2563eb',
+  // A request's destination, shown before accepting: not one of the trip's drop-offs.
+  preview: '#7c3aed',
 };
 
 const PATH_COLOUR = '#0f172a';

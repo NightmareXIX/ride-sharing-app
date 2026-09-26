@@ -66,6 +66,8 @@ function DriverDashboard({
   const [draft, setDraft] = useState<LatLng | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
   const [accepting, setAccepting] = useState<string | null>(null);
+  // The request whose destination is on the map (driver-map LLD §4).
+  const [previewing, setPreviewing] = useState<string | null>(null);
   // The passenger whose trip action is running.
   const [stepping, setStepping] = useState<string | null>(null);
   const [completed, setCompleted] = useState<CompletedRide | null>(null);
@@ -204,6 +206,7 @@ function DriverDashboard({
   // Everything is checked again on the server; the list may be a few seconds old.
   async function accept(request: NearbyRequest) {
     setAccepting(request.id);
+    setPreviewing(null);
     setAlert('');
     setNotice('');
     try {
@@ -340,12 +343,22 @@ function DriverDashboard({
 
   if (searching) {
     for (const request of requests ?? []) {
+      // Shown only while the request is listed, so a taken one leaves the map with it.
+      const shown = request.id === previewing;
       markers.push({
         key: `request-${request.id}`,
         point: request.pickup,
-        label: request.pickup.label,
+        label: shown ? 'Pickup (preview)' : request.pickup.label,
         tone: 'pickup',
       });
+      if (shown) {
+        markers.push({
+          key: `preview-${request.id}`,
+          point: request.destination,
+          label: `Drop-off: ${request.destination.label}`,
+          tone: 'preview',
+        });
+      }
     }
   }
 
@@ -381,6 +394,8 @@ function DriverDashboard({
           freeSeats={seatsFree}
           accepting={accepting}
           onAccept={accept}
+          previewing={previewing}
+          onPreview={setPreviewing}
         />
       )}
       {vehicle.isOnline && seatsFree === 0 && (
