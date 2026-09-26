@@ -29,7 +29,7 @@ export function NearbyRequests({
   // The request being accepted; every Accept button waits for it (NFR-37).
   accepting: string | null;
   onAccept: (request: NearbyRequest) => void;
-  // The request whose destination is on the map, one at a time; null for none.
+  // The request whose trip is on the map, one at a time; null for none.
   previewing: string | null;
   onPreview: (requestId: string | null) => void;
 }) {
@@ -105,7 +105,7 @@ export function NearbyRequests({
                         onClick={() => onPreview(shown ? null : request.id)}
                         className={secondaryButton}
                       >
-                        {shown ? 'Hide destination' : 'See destination'}
+                        {shown ? 'Hide route' : 'See route'}
                       </button>
                       <button
                         type="button"

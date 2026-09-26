@@ -6,6 +6,7 @@ import { createDb } from './db/client.js';
 import type { DispatchConfig } from './domain/dispatch.js';
 import { createDistanceService } from './geo/distance.js';
 import type { RoutingConfig } from './geo/openRouteService.js';
+import { createPathService } from './geo/path.js';
 import { errorHandler, notFoundHandler } from './http/middleware/errorHandler.js';
 import { requestLogger } from './http/middleware/requestLogger.js';
 import type { Logger } from './logger.js';
@@ -34,7 +35,13 @@ export function createApp({ logger, pool, session, routing, dispatch }: AppDeps)
   const db = createDb(pool);
   app.use(
     '/api/v1',
-    v1Router({ db, session, dispatch, distance: createDistanceService(db, routing) }),
+    v1Router({
+      db,
+      session,
+      dispatch,
+      distance: createDistanceService(db, routing),
+      paths: createPathService(db, routing),
+    }),
   );
 
   app.use(notFoundHandler);

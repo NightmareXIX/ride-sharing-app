@@ -119,6 +119,13 @@ Saved road distances, so the map service isn't asked for the same distance twice
 - `method`
 - `created_at`
 
+### RoutePathCache (supporting)
+Saved road shapes, one per leg, so the map service isn't asked to draw the same road twice. For drawing only: no distance or fare is read from it. Only routed shapes are stored.
+- `id`
+- `origin_lat`, `origin_lng`, `dest_lat`, `dest_lng`
+- `polyline` (the leg's encoded polyline)
+- `created_at`
+
 ---
 
 ## 2. ERD
@@ -248,6 +255,14 @@ erDiagram
         decimal dest_lng
         decimal distance_km
         enum method
+    }
+    ROUTE_PATH_CACHE {
+        uuid id PK
+        decimal origin_lat
+        decimal origin_lng
+        decimal dest_lat
+        decimal dest_lng
+        string polyline
     }
 ```
 

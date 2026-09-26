@@ -69,8 +69,8 @@ The specs are the source of truth for every phase:
 The ERD shows the target schema. The database grows one migration per phase, so today it
 holds `users`, `wallets`, `wallet_transactions`, `vehicles` (with online status,
 location and seats), `pools`, `bookings` (with their lifecycle times),
-`booking_status_history`, `route_stops`, `fares`, `driver_penalties` and
-`distance_cache`.
+`booking_status_history`, `route_stops`, `fares`, `driver_penalties`, `distance_cache`
+and `route_path_cache`.
 
 The browser talks only to the Next.js site. The site proxies `/api/v1/*` to the Express
 API, so the login cookie is first-party even though the two run on different hosts.
@@ -323,21 +323,29 @@ through a ledger entry:
 To try a ride: sign in as Jashim and go online. In another browser, sign in as Nusrat and
 set the pickup to Banani Road 11: her map shows Bullet among the Teslas within 2 km, for
 looking only. Choose Mohakhali, get the estimate and request the ride. Within a few
-seconds it appears in Jashim's nearby requests. **See destination** marks where it goes on
-his map. Accept it, then tap **Arrived at pickup**, **start trip** and **complete trip**.
+seconds it appears in Jashim's nearby requests. **See route** draws her trip by road on his
+map. Accept it, and his route by road runs from Bullet through the stops. Then then tap **Arrived at pickup**, **start trip** and **complete trip**.
 On Jashim's map, Bullet glides to the pickup when he arrives and to the drop-off when he
 completes, and arrows show the order of the stops. Nusrat's screen follows each step and
 ends with the fare to pay in cash and how it was worked out. To see a driver cancel, tap
 **Cancel ride** before starting: the request goes back to waiting and Nusrat is told why.
 
 To see a pooled ride: with Jashim online at Banani Road 11, have Nusrat request Banani Road
-11 → Mohakhali and accept it. Then have Rafiq request Banani Road 11 → Gulshan 1. Jashim
-sees it under **Requests on your route**, adding 0.970 km. Accept it: the route lists
-Nusrat's pickup, Rafiq's pickup, Nusrat's drop-off, then Rafiq's, and only the next stop
-has a button. Take the steps in order. With no map key, Nusrat pays ৳ 52.02 and Rafiq
-৳ 71.42 ([worked out below](#pooling)), and each sees only their own fare. Choose TeslaPay
-for both, and their wallets end at ৳ 447.98 and ৳ 428.58 while Jashim's reaches
-৳ 123.44.
+11 → Mohakhali and accept it. What Rafiq requests next depends on whether a map key is set
+([both worked out below](#pooling)):
+
+- **No map key.** Have Rafiq request Banani Road 11 → Gulshan 1. Jashim sees it under
+  **Requests on your route**, adding 0.970 km. Accept it: the route lists Nusrat's pickup,
+  Rafiq's pickup, Nusrat's drop-off, then Rafiq's, and only the next stop has a button.
+  Take the steps in order. Nusrat pays ৳ 52.02 and Rafiq ৳ 71.42, and each sees only their
+  own fare. Choose TeslaPay for both, and their wallets end at ৳ 447.98 and ৳ 428.58 while
+  Jashim's reaches ৳ 123.44.
+- **With an OpenRouteService key.** Banani Road 11 → Gulshan 1 is refused by road: it would
+  be a 1.15 km detour, over the 1 km limit, so Jashim never sees it. Instead, have Rafiq
+  choose the **Airport Road** quick pick as his destination, which lies on Nusrat's road.
+  Jashim sees it adding 0.001 km, and **See route** draws Rafiq's trip in violet on top of
+  Jashim's route. Accept it: Rafiq is dropped first, and the pair pay ৳ 78.90 and ৳ 56.72
+  (as measured on 26 Sep 2026).
 
 To see a same-gender pool: with Jashim online at Banani Road 11, have Nusrat request Banani
 Road 11 → Mohakhali as **Same-gender** and accept it. Jashim's trip is marked **Women
@@ -487,6 +495,20 @@ reached, else its saved location. Points are rounded to about 110 m and carry no
 name, and a passenger can't choose one. Details are in the
 [nearby Teslas LLD](docs/lld/passenger-nearby-teslas.md).
 
+Road routes (added after phase 8), under `/api/v1`, for drawing only:
+
+| Method | Route                              | Who       | Does                                                           | Errors   |
+| ------ | ---------------------------------- | --------- | -------------------------------------------------------------- | -------- |
+| POST   | `/fare-estimates`                  | passenger | Also returns `path: { legs }`, the trip's road                 | as above |
+| GET    | `/bookings/:id/path`               | passenger | `{ legs }`: the ride's own road, pickup to destination         | 404      |
+| GET    | `/driver/pool/path`                | driver    | `{ legs }`: the road from Bullet through each stop not reached | —        |
+| GET    | `/driver/requests/:bookingId/path` | driver    | `{ legs }`: an open request's road, pickup to destination      | 404      |
+
+Each leg is `{ method, points: [[lat, lng], …] }`, with `method` `routed` or `fallback` (a
+straight line, when the map service can't answer). Shapes come from OpenRouteService once
+per leg and are cached. A passenger never gets the shared trip's route. Details are in the
+[route-paths LLD](docs/lld/route-paths.md).
+
 Every error has the same shape (NFR-35):
 
 ```json
@@ -522,8 +544,12 @@ I/O, so it is tested on its own (NFR-26). A route check needs many road distance
 makes one OpenRouteService matrix request for all of them and caches the answers. Each
 refresh of the driver's list makes at most 3 such requests (NFR-3).
 
-**Nusrat and Rafiq's trip (FR-L4).** Both start at Banani Road 11, where Bullet waits. With
-no map key the distances are straight-line × 1.3: Banani → Mohakhali 1.835 km, Banani →
+**Nusrat and Rafiq's trip (FR-L4).** Both start at Banani Road 11, where Bullet waits, and
+Jashim accepts Nusrat first. The result depends on how distances are measured, so there
+are two worked examples: one with no map key, which anyone can reproduce, and one with an
+OpenRouteService key, on real roads.
+
+**Example 1: no map key (straight-line × 1.3).** Banani → Mohakhali 1.835 km, Banani →
 Gulshan 1 2.287 km, Mohakhali → Gulshan 1 0.970 km.
 
 - Jashim accepts Nusrat first. The route is her pickup at 0.000 km, then her drop-off at
@@ -543,15 +569,41 @@ Gulshan 1 2.287 km, Mohakhali → Gulshan 1 0.970 km.
 | Computed                                                             | 30 + 36.70 − 14.68 | 30 + 56.10 − 14.68 |
 | **Final**                                                            | **৳ 52.02**        | **৳ 71.42**        |
 
-Both ride 1 seat on a Pool ride, so both multipliers are 1. With an OpenRouteService key
-the distances come from real roads, so the numbers differ.
+Both ride 1 seat on a Pool ride, so both multipliers are 1.
+
+**Example 2: with an OpenRouteService key (real roads).** Measured on 26 Sep 2026. Road data
+changes, so a later run can differ slightly. Banani → Mohakhali 3.335 km: the road runs west
+to Airport Road, south along it, past Wireless Gate, and turns back at the divider. Banani
+→ Gulshan 1 3.061 km, Mohakhali → Gulshan 1 0.876 km, Gulshan 1 → Mohakhali 1.969 km.
+
+- **Rafiq to Gulshan 1 is refused.** With Nusrat dropped first, his ride is 3.335 + 0.876 =
+  4.211 km against a direct 3.061, a 1.150 km detour. With Rafiq dropped first, Nusrat's
+  ride is 3.061 + 1.969 = 5.030 km against 3.335, a 1.695 km detour. Both are over 1 km
+  (FR-L3(c)), so the request isn't listed. This is FR-L4's defined result on real roads.
+- **Rafiq to Airport Road (23.78102, 90.40028), a point on Nusrat's road, pools.** His
+  direct trip is 2.227 km (estimate ৳ 74.54), and it adds 0.001 km to the route. The route
+  becomes: pick up Nusrat 0.000, pick up Rafiq 0.000, drop off Rafiq 2.227, drop off
+  Nusrat 3.336. Nusrat's detour is 0.001 km, under 1 km and under 0.4 × 2.227 = 0.891.
+
+| Fare = (30 + 20 × actual km − 8 × shared km), capped at the estimate | Nusrat              | Rafiq (Airport Road) |
+| -------------------------------------------------------------------- | ------------------- | -------------------- |
+| Odometer at pickup → drop-off                                        | 0.000 → 3.336       | 0.000 → 2.227        |
+| Actual km, shared km                                                 | 3.336, 2.227        | 2.227, 2.227         |
+| Estimate: 30 + 20 × direct km                                        | 30 + 66.70 = 96.70  | 30 + 44.54 = 74.54   |
+| Computed                                                             | 30 + 66.72 − 17.816 | 30 + 44.54 − 17.816  |
+| **Final**                                                            | **৳ 78.90**         | **৳ 56.72**          |
+
+The computed fares are 78.904 and 56.724 before the single half-up rounding (FR-F5).
+Airport Road is a quick pick at exactly this point, so choosing it reproduces these figures.
+A point tapped nearby gives slightly different ones.
 
 **Why the Mohakhali pin moved.** At the first Mohakhali pin (23.7781, 90.4050), Gulshan 1
 branches off the way to Mohakhali, and whichever passenger is dropped second rides about
 1.5 km further than their direct trip. FR-L3 allows 1 km, so they wouldn't pool. FR §13
 left this to be checked once routing was built. Rather than loosen the rule, the Mohakhali
 quick pick moved to Wireless Gate (23.7812, 90.4090), where the road from Mohakhali to
-Gulshan 1 begins.
+Gulshan 1 begins. That was judged on straight-line distances; on real roads the divider
+there still makes the detour too long (Example 2).
 
 ## Ride options
 
@@ -715,7 +767,10 @@ rarely taps that fast, and a retry succeeds.
   checks (FR-W3, FR-W7) were planned for phases 4 and 6. They are enforced from phase 2
   because creating a request depends on them.
 - **The Mohakhali pin.** The Mohakhali quick pick is Wireless Gate, so Nusrat's and
-  Rafiq's story trips pool under the matching rule ([why](#pooling)).
+  Rafiq's story trips pool under the matching rule with no map key ([why](#pooling)).
+- **The Airport Road pin.** With a map key they don't pool, so the Airport Road quick pick
+  sits on Nusrat's road to Mohakhali, for a second ride that pools on real roads
+  ([Example 2](#pooling)).
 - **Where a trip's km start.** A trip's odometer reads 0 where the Tesla stood when the trip
   began. Two stops at the same place are 0 km apart, with no map request.
 - **Nearby means a straight line.** The 2 km search radius is measured as the crow flies
@@ -754,8 +809,14 @@ the full list. Specific to the current state:
   by hand with a correcting ledger entry.
 - While the map service is failing, fallback distances aren't cached. The same 3 requests
   then ask it again on every refresh, and a fourth waits until it recovers.
-- The dashed line on the driver's map joins the stops in order, with arrows; it isn't the
-  road. Bullet glides between stops in a straight line.
+- Maps draw the road from OpenRouteService. Without a key, or while it fails, a leg is a
+  straight dashed line and the legend says so. Bullet still glides between stops in a
+  straight line, not along the road.
+- A passenger sees only their own trip by road. When pooled, the Tesla may detour up to
+  1 km through other riders' stops, which their map doesn't show (FR-P8).
+- With a key, Nusrat's and Rafiq's story rides don't pool: by road, Rafiq's ride would
+  be a 1.15 km detour, over the 1 km limit. They pool with the no-key distances; both
+  results are worked out under [Pooling](#pooling).
 - A passenger's nearby Teslas are up to 4 s old, rounded to about 110 m, and measured in a
   straight line. A Tesla shows at its last stop, not along the road between stops. The
   seed has one Tesla, so the demo shows at most one; sign up another driver to see more.

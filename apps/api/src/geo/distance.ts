@@ -10,7 +10,7 @@ import type { LatLng } from './serviceArea.js';
 export const ROUTING_TIMEOUT_MS = 10_000;
 
 // Slower than this misses the speed target (NFR-2) and is worth a warning (NFR-44).
-const SLOW_ROUTING_MS = 4_000;
+export const SLOW_ROUTING_MS = 4_000;
 
 export type DistanceMethod = (typeof distanceMethod.enumValues)[number];
 

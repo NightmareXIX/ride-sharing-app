@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useState, type ReactNode } from 'react';
 import { ChoiceGroup, FieldError, FormAlert } from '@/components/forms';
+import { MapLegend, type LegendItem } from '@/components/MapLegend';
 import { MapPicker, type MapMarker } from '@/components/MapPicker';
 import { QuickPicks } from '@/components/QuickPicks';
 import type { Gender } from '@/lib/account';
@@ -19,6 +20,7 @@ import {
 import type { LatLng, Place } from '@/lib/geo';
 import { formatTaka, toPoysha } from '@/lib/money';
 import { describeNearby } from '@/lib/nearby';
+import { isApproximate } from '@/lib/path';
 import { describePoint } from '@/lib/places';
 import { useNearbyTeslas } from '@/lib/useNearbyTeslas';
 import { useSlowFlag } from '@/lib/useSlowFlag';
@@ -132,6 +134,13 @@ function SeatStepper({
       <FieldError id="field-seats-error" message={error && `Seats: ${error}.`} />
     </div>
   );
+}
+
+// The trip the estimate was priced on, as drawn (route-paths LLD §4).
+function tripLegend(quote: FareQuote): LegendItem {
+  return isApproximate(quote.path.legs)
+    ? { key: 'trip', kind: 'approximate', label: 'Your trip, as a straight line' }
+    : { key: 'trip', kind: 'trip', label: `Your trip by road, ${quote.directKm} km` };
 }
 
 function QuoteCard({
@@ -329,9 +338,11 @@ export function RequestRideForm({
         <MapPicker
           label={`Map of Dhaka. Tap to set the ${choosing}.`}
           markers={markers}
+          routes={quote ? [{ key: 'trip', tone: 'trip', legs: quote.path.legs }] : undefined}
           nearby={pickup && nearby ? { center: pickup, ...nearby } : undefined}
           onPick={busy ? undefined : pickOnMap}
         />
+        {quote && <MapLegend items={[tripLegend(quote)]} />}
         <p aria-live="polite" className="flex items-start gap-2 text-sm text-slate-600">
           <span aria-hidden className="mt-1.5 size-2.5 shrink-0 rounded-full bg-slate-900" />
           {!pickup

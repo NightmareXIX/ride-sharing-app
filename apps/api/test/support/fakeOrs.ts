@@ -1,6 +1,7 @@
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
+import { encodePolyline } from '../../src/geo/polyline.js';
 
 type LngLat = [number, number];
 
@@ -15,14 +16,25 @@ export type FakeOrsBehaviour =
 
 export interface FakeOrs {
   baseUrl: string;
-  // Requests to either endpoint, and to the matrix endpoint alone.
+  // Requests to either endpoint, and to each one alone.
   hits: number;
   matrixHits: number;
+  directionsHits: number;
   lastAuthorization: string | undefined;
   lastCoordinates: unknown;
   lastLocations: LngLat[] | undefined;
   behave: (behaviour: FakeOrsBehaviour) => void;
   close: () => Promise<void>;
+}
+
+// A route as ORS sends it: its distance, and its shape as a straight line through the
+// points asked for, with each point's place in it.
+function directionsRoute(coordinates: LngLat[], meters: number) {
+  return {
+    summary: { distance: meters, duration: 600 },
+    geometry: encodePolyline(coordinates.map(([lng, lat]) => [lat, lng])),
+    way_points: coordinates.map((_, i) => i),
+  };
 }
 
 // A local stand-in for OpenRouteService's directions endpoint. Tests never call the real
@@ -40,6 +52,7 @@ export async function startFakeOrs(): Promise<FakeOrs> {
     baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
     hits: 0,
     matrixHits: 0,
+    directionsHits: 0,
     lastAuthorization: undefined,
     lastCoordinates: undefined,
     lastLocations: undefined,
@@ -57,19 +70,21 @@ export async function startFakeOrs(): Promise<FakeOrs> {
 
   app.post('/v2/directions/driving-car', async (req, res) => {
     fake.hits += 1;
+    fake.directionsHits += 1;
     fake.lastAuthorization = req.headers.authorization;
-    fake.lastCoordinates = (req.body as { coordinates?: unknown }).coordinates;
+    const coordinates = (req.body as { coordinates: LngLat[] }).coordinates;
+    fake.lastCoordinates = coordinates;
     const current = behaviour;
     switch (current.kind) {
       case 'route':
         if (current.delayMs) await new Promise((resolve) => setTimeout(resolve, current.delayMs));
-        res.json({ routes: [{ summary: { distance: current.meters, duration: 600 } }] });
+        res.json({ routes: [directionsRoute(coordinates, current.meters)] });
         return;
       case 'distances': {
-        const [from, to] = (req.body as { coordinates: [LngLat, LngLat] }).coordinates;
+        const [from, to] = coordinates as [LngLat, LngLat];
         const meters = current.meters(from, to);
         if (meters === null) res.status(404).json({ error: { code: 2010, message: 'no route' } });
-        else res.json({ routes: [{ summary: { distance: meters, duration: 600 } }] });
+        else res.json({ routes: [directionsRoute(coordinates, meters)] });
         return;
       }
       case 'status':

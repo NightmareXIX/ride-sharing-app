@@ -1,6 +1,7 @@
 import type { Gender } from './account';
 import type { FareBreakdown } from './fare';
 import type { Place } from './geo';
+import type { RoutePath } from './path';
 
 export type RideOption = 'pool' | 'same_gender' | 'solo';
 export type PaymentMethod = 'cash' | 'teslapay';
@@ -39,6 +40,8 @@ export interface FareQuote {
   seatMultiplier: string;
   optionMultiplier: string;
   estimatedFare: string;
+  // The trip's road, to draw on the map.
+  path: RoutePath;
 }
 
 // A passenger's own booking, as the API returns it. It names their driver and Tesla once
