@@ -8,7 +8,7 @@ services:
     # Same region as the Neon database, so queries stay fast.
     region: singapore
     # The branch the evaluated version is deployed from.
-    branch: pre-release
+    branch: release/v1.0.0
     # The Dockerfile copies the root lockfile, so it builds from the repo root.
     dockerfilePath: ./apps/api/Dockerfile
     dockerContext: .
