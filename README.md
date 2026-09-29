@@ -566,7 +566,7 @@ visitors and takes about a minute to wake. If the first sign-in hangs, wait a mo
 try again.
 
 Deploying it yourself takes about 15 minutes on free accounts: see the
-[deployment guide](docs/deployment.md). A push to `pre-release` redeploys both the website
+[deployment guide](docs/deployment.md). A push to `release/v1.0.0` redeploys both the website
 and the API, and the API applies any new migrations as it starts.
 
 ## API overview

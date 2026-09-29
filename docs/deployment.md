@@ -49,7 +49,7 @@ The repo has a Blueprint, [`render.yaml`](../render.yaml), that describes the se
    repository.
 2. Choose **New → Blueprint** and pick the repository. Render reads `render.yaml`. It
    builds `apps/api/Dockerfile` from the repo root, on the free plan in Singapore, and
-   deploys the `pre-release` branch.
+   deploys the `release/v1.0.0` branch.
 3. When asked, paste the two secrets:
    - `DATABASE_URL`: the Neon string from step 1
    - `ORS_API_KEY`: the key from step 2, or leave it empty
@@ -61,7 +61,7 @@ The repo has a Blueprint, [`render.yaml`](../render.yaml), that describes the se
    it: `https://<api>/health/ready` returns `{"status":"ok","database":"up"}`.
 
 If the Blueprint flow asks for payment details, create the service by hand instead:
-**New → Web Service**, the same repository, language **Docker**, branch `pre-release`,
+**New → Web Service**, the same repository, language **Docker**, branch `release/v1.0.0`,
 Dockerfile path `./apps/api/Dockerfile`, Docker context `.`, region Singapore, instance
 type **Free**, health check path `/health/ready`, and the same environment variables. For
 `SESSION_SECRET`, generate a value with
@@ -81,8 +81,8 @@ type **Free**, health check path `/health/ready`, and the same environment varia
    trailing slash), for Production and Preview. Next.js reads it at **build** time to set up
    the proxy, so a change needs a redeploy.
 6. Deploy. The import always builds the default branch (`master`) first.
-7. In **Settings → Git**, set the **Production Branch** to `pre-release`, then redeploy. At
-   release it moves to `release/v1.0.0`.
+7. In **Settings → Git**, set the **Production Branch** to `release/v1.0.0`, then redeploy.
+   Other branches, `pre-release` among them, get Vercel's preview deployments.
 8. Optional: in **Settings → Functions**, set the region to Singapore (`sin1`), next to the
    API and database.
 
@@ -101,8 +101,9 @@ type **Free**, health check path `/health/ready`, and the same environment varia
   request wakes it, which takes about a minute. Open `https://<api>/health` first to wake
   it before a demo.
 - **Neon sleeps too**, after 5 minutes idle, but wakes in under a second.
-- **Deploys.** A push to `pre-release` redeploys both the API and the website. The API
-  applies any new migrations as it starts.
+- **Deploys.** A push to `release/v1.0.0` redeploys both the API and the website. The API
+  applies any new migrations as it starts. A fix to the live version goes into
+  `release/v1.0.0` by pull request, and is then merged back into `pre-release`.
 - **Resetting the demo data.** The seed never overwrites existing users, and the ledger
   refuses deletes. To start fresh, run this in Neon's SQL editor, then restart the Render
   service (**Manual Deploy → Restart service**) so it migrates and seeds again:
