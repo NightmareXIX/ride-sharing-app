@@ -8,7 +8,7 @@ people than it has seats, and each passenger pays only for their own part of the
 
 - **Live site:** https://dhaka-tesla-pool-omega.vercel.app (the first visit can take a
   minute while the free server wakes up)
-- **Demo video:** _added at release_ (see [Demo video](#demo-video))
+- **Demo video:** https://drive.google.com/file/d/1uaRrq_8lIRsnD4wbGP2tqyE_Yrqwrowg/view?usp=sharing
 - **Try it without signing up:** one-tap demo accounts, see [Demo credentials](#demo-credentials)
 
 ## Contents
@@ -918,4 +918,5 @@ seats are protected, and how the app fails.
 
 ## Demo video
 
-_Added at release: a 6-minute walkthrough of the problem, the design and the app._
+A 6-minute walkthrough of the problem, the design and the app:
+https://drive.google.com/file/d/1uaRrq_8lIRsnD4wbGP2tqyE_Yrqwrowg/view?usp=sharing
