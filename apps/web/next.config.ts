@@ -16,7 +16,11 @@ const nextConfig: NextConfig = {
   // The browser only ever talks to this site; API calls are proxied so the auth cookie
   // stays first-party across the two hosts (NFR §1).
   async rewrites() {
-    return [{ source: '/api/v1/:path*', destination: `${apiUrl}/api/v1/:path*` }];
+    return [
+      { source: '/api/v1/:path*', destination: `${apiUrl}/api/v1/:path*` },
+      // Readiness lives outside /api/v1; the cold-start notice polls it.
+      { source: '/api/health', destination: `${apiUrl}/health/ready` },
+    ];
   },
 };
 
